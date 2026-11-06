@@ -29,6 +29,10 @@ Test ederken bile `bas` çalıştırma (bir kez yanlışlıkla kâğıt basıld�
    yeni "bas" onayı → `yazdir bas arka --onayli`. `bas` bitene kadar bekler; çıkış kodu 2 = kağıt yok/zaman aşımı.
 5. Kitapçık: kâğıtlar sırayla iç içe konup ortadan katlanır.
 
+## Dil
+Arayüz ve mesajlar Türkçe ya da İngilizce olabilir (`yazdir dil tr|en`, pencerede sağ üstte "Dil").
+Kullanıcıyla Türkçe konuşuyorsan ve çıktı İngilizce geliyorsa `yazdir dil tr` çalıştır.
+
 ## Arka yüz yönü
 2'li sayfa ve kitapçıkta arka yüzler kendiliğinden 180° döndürülür (Windows sürücüsü de böyle yapar).
 Kullanıcı "arka sayfalar ters/baş aşağı çıkıyor" derse: `yazdir deneme` (1 kâğıt) → onayla `bas on` / `bas arka` →

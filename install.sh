@@ -19,9 +19,12 @@ mkdir -p "$HOME/.local/share/applications"
 cat > "$HOME/.local/share/applications/yazdir.desktop" <<DESK
 [Desktop Entry]
 Type=Application
-Name=Yazdır
-GenericName=Gelişmiş yazdırma
-Comment=Elle arkalı önlü, sayfa başına 2/4 sayfa ve kitapçık baskısı
+Name=Manual Duplex Print
+Name[tr]=Yazdır
+GenericName=Advanced printing
+GenericName[tr]=Gelişmiş yazdırma
+Comment=Manual two-sided, 2/4 pages per side and booklet printing
+Comment[tr]=Elle arkalı önlü, sayfa başına 2/4 sayfa ve kitapçık baskısı
 Exec=$D/bin/yazdir-gui %f
 Icon=document-print
 Terminal=false
@@ -40,7 +43,8 @@ Actions=yazdir;
 X-KDE-Priority=TopLevel
 
 [Desktop Action yazdir]
-Name=Yazdır (arkalı önlü / kitapçık)…
+Name=Print (two-sided / booklet)…
+Name[tr]=Yazdır (arkalı önlü / kitapçık)…
 Icon=document-print
 Exec=$D/bin/yazdir-gui %f
 DESK

@@ -2,7 +2,8 @@
 
 Two-sided, 2/4-up and A5 booklet printing on Linux for printers that have no duplex unit
 (tested with an HP LaserJet 1018). A command-line tool and a Qt (PySide6) window on top of CUPS.
-The interface is in Turkish; the app is called **Yazdır** ("print") and the commands are `yazdir` / `yazdir-gui`.
+The interface is available in **English and Turkish**: pick the language from the top-right of the window
+or run `yazdir dil en`. The commands are `yazdir` / `yazdir-gui` (*yazdır* is Turkish for "print").
 
 - **Manual duplex:** prints the fronts, tells you to put the whole stack back as it came out,
   then prints the backs in the right order. Odd page counts need no sheet removal: the last sheet
@@ -61,7 +62,9 @@ yazdir bas on --onayli                        # ön yüzler
 yazdir bas arka --onayli                      # arka yüzler (kâğıtları geri koyduktan sonra)
 yazdir deneme                                 # arka yüz yön denemesi; sonra: yazdir deneme-sonucu evet|hayir
 yazdir durum | temizle | yazicilar
+yazdir dil tr|en                              # arayüz dili / interface language
 ```
+Arayüz dili pencerenin sağ üstündeki **Dil** kutusundan da seçilir; seçim hatırlanır. Ayar yoksa sistem dili kullanılır.
 Ayrıntı: `yazdir --help`. `bas`, `--onayli` olmadan kâğıda hiçbir şey göndermez
 (yapay zekâ asistanı kullanırken yanlışlıkla baskıyı önlemek için).
 

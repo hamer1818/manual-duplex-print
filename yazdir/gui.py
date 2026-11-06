@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QLibraryInfo, QObject, QSize, Qt, QThread, QTimer, QTranslator, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
@@ -10,10 +10,27 @@ from PySide6.QtWidgets import (
     QSpinBox, QVBoxLayout, QWidget,
 )
 
-from . import core
+from . import core, dil
+from .dil import t
 
-UZANTILAR = "Belgeler (*.pdf *.doc *.docx *.odt *.rtf *.txt *.ppt *.pptx *.odp *.xls *.xlsx *.ods " \
-            "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.gif);;Tüm dosyalar (*)"
+DESEN = ("*.pdf *.doc *.docx *.odt *.rtf *.txt *.ppt *.pptx *.odp *.xls *.xlsx *.ods "
+         "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.gif")
+
+_qt_cevirmen = None
+
+
+def qt_dilini_ayarla():
+    """Qt'nin kendi düğmeleri (Evet/Hayır, İptal…) da seçilen dilde görünsün."""
+    global _qt_cevirmen
+    app = QApplication.instance()
+    if _qt_cevirmen is not None:
+        app.removeTranslator(_qt_cevirmen)
+        _qt_cevirmen = None
+    if dil.aktif() != "en":
+        c = QTranslator(app)
+        if c.load(f"qtbase_{dil.aktif()}", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
+            app.installTranslator(c)
+            _qt_cevirmen = c
 
 
 class Isci(QObject):
@@ -37,24 +54,35 @@ class Isci(QObject):
 class Pencere(QMainWindow):
     def __init__(self, dosya=None):
         super().__init__()
-        self.setWindowTitle("Yazdır")
         self.setWindowIcon(QIcon.fromTheme("document-print"))
         self.resize(980, 680)
         self.is_ = None
         self.dosya = None
         self._thread = None
         self._deneme_onceki = None   # deneme sayfası bitince geri dönülecek iş
+        self._resimler = []          # son önizleme resimleri (dil değişince etiketler yeniden yazılır)
         self.setAcceptDrops(True)
 
         # --- dosya
-        self.dosya_etiket = QLabel("Dosya seçilmedi — dosyayı buraya sürükleyebilirsiniz.")
+        self.dosya_etiket = QLabel()
         self.dosya_etiket.setWordWrap(True)
         self.dosya_etiket.setTextFormat(Qt.PlainText)
-        sec = QPushButton(QIcon.fromTheme("document-open"), "Dosya Seç…")
-        sec.clicked.connect(self.dosya_sec)
+        self.sec_btn = QPushButton(QIcon.fromTheme("document-open"), "")
+        self.sec_btn.clicked.connect(self.dosya_sec)
+
+        # --- dil seçimi
+        self.dil_etiket = QLabel()
+        self.dil_secim = QComboBox()
+        for kod, ad in dil.DILLER.items():
+            self.dil_secim.addItem(ad, kod)
+        self.dil_secim.setCurrentIndex(self.dil_secim.findData(dil.aktif()))
+        self.dil_secim.currentIndexChanged.connect(self.dil_degisti)
+
         ust = QHBoxLayout()
-        ust.addWidget(sec)
+        ust.addWidget(self.sec_btn)
         ust.addWidget(self.dosya_etiket, 1)
+        ust.addWidget(self.dil_etiket)
+        ust.addWidget(self.dil_secim)
 
         # --- ayarlar
         self.yazici = QComboBox()
@@ -65,8 +93,8 @@ class Pencere(QMainWindow):
 
         self.duzen_grup = QButtonGroup(self)
         duzen_kutu = QVBoxLayout()
-        for anahtar, ad in core.DUZENLER.items():
-            r = QRadioButton(ad)
+        for anahtar in core.DUZENLER:
+            r = QRadioButton()
             r.setProperty("duzen", anahtar)
             self.duzen_grup.addButton(r)
             duzen_kutu.addWidget(r)
@@ -74,58 +102,56 @@ class Pencere(QMainWindow):
                 r.setChecked(True)
         self.duzen_grup.buttonToggled.connect(self.ayar_degisti)
 
-        self.arkali = QCheckBox("Arkalı önlü (elle çevirerek)")
+        self.arkali = QCheckBox()
         self.arkali.toggled.connect(self.ayar_degisti)
         self.sayfalar = QLineEdit()
-        self.sayfalar.setPlaceholderText("Tümü  (ör. 1-5, 8, 10-)")
         self.sayfalar.editingFinished.connect(self.ayar_degisti)
         self.kopya = QSpinBox()
         self.kopya.setRange(1, 99)
         self.kopya.valueChanged.connect(self.ayar_degisti)
 
+        self.form_etiketleri = {"gui.yazici": QLabel(), "gui.sayfalar": QLabel(), "gui.kopya": QLabel()}
         form = QFormLayout()
-        form.addRow("Yazıcı:", self.yazici)
-        form.addRow("Sayfalar:", self.sayfalar)
-        form.addRow("Kopya:", self.kopya)
-        dz = QGroupBox("Sayfa düzeni")
-        dz.setLayout(duzen_kutu)
+        form.addRow(self.form_etiketleri["gui.yazici"], self.yazici)
+        form.addRow(self.form_etiketleri["gui.sayfalar"], self.sayfalar)
+        form.addRow(self.form_etiketleri["gui.kopya"], self.kopya)
+        self.dz = QGroupBox()
+        self.dz.setLayout(duzen_kutu)
 
         self.ozet = QLabel("")
         self.ozet.setWordWrap(True)
         self.ozet.setTextFormat(Qt.PlainText)
 
-        self.yazdir_btn = QPushButton(QIcon.fromTheme("document-print"), "Yazdır")
+        self.yazdir_btn = QPushButton(QIcon.fromTheme("document-print"), "")
         self.yazdir_btn.setMinimumHeight(42)
         self.yazdir_btn.setEnabled(False)
         self.yazdir_btn.clicked.connect(self.yazdir)
 
-        temizle = QPushButton(QIcon.fromTheme("edit-clear"), "Kuyruğu temizle")
-        temizle.clicked.connect(self.kuyrugu_temizle)
+        self.temizle_btn = QPushButton(QIcon.fromTheme("edit-clear"), "")
+        self.temizle_btn.clicked.connect(self.kuyrugu_temizle)
 
         # --- yazıcı ayarı: arka yüz yönü (bir kez deneme sayfasıyla belirlenir)
-        self.arka_180 = QCheckBox("Arka yüzleri 180° çevir")
-        self.arka_180.setToolTip("Arka yüzler baş aşağı çıkıyorsa işaretleyin. "
-                                 "Emin değilseniz 'Yön deneme sayfası' ile bir kez deneyin.")
+        self.arka_180 = QCheckBox()
         self.arka_180.setChecked(bool(core.ayarlar().get("arka_180", False)))
         self.arka_180.toggled.connect(self.arka_180_degisti)
-        deneme = QPushButton(QIcon.fromTheme("document-print-preview"), "Yön deneme sayfası (1 kâğıt)")
-        deneme.clicked.connect(self.deneme_bas)
+        self.deneme_btn = QPushButton(QIcon.fromTheme("document-print-preview"), "")
+        self.deneme_btn.clicked.connect(self.deneme_bas)
         yk = QVBoxLayout()
         yk.addWidget(self.arka_180)
-        yk.addWidget(deneme)
-        yazici_ayar = QGroupBox("Arkalı önlü yönü")
-        yazici_ayar.setLayout(yk)
+        yk.addWidget(self.deneme_btn)
+        self.yon_grubu = QGroupBox()
+        self.yon_grubu.setLayout(yk)
 
         sol = QVBoxLayout()
         sol.addLayout(form)
-        sol.addWidget(dz)
+        sol.addWidget(self.dz)
         sol.addWidget(self.arkali)
-        sol.addWidget(yazici_ayar)
+        sol.addWidget(self.yon_grubu)
         sol.addSpacing(8)
         sol.addWidget(self.ozet)
         sol.addStretch(1)
         sol.addWidget(self.yazdir_btn)
-        sol.addWidget(temizle)
+        sol.addWidget(self.temizle_btn)
         solw = QWidget()
         solw.setLayout(sol)
         solw.setFixedWidth(320)
@@ -149,6 +175,7 @@ class Pencere(QMainWindow):
         w.setLayout(ana)
         self.setCentralWidget(w)
 
+        self.metinleri_yaz()
         self.durum_guncelle()
         t = QTimer(self)
         t.timeout.connect(self.durum_guncelle)
@@ -156,6 +183,44 @@ class Pencere(QMainWindow):
 
         if dosya:
             self.dosya_ac(dosya)
+
+    # ---------------------------------------------------------- dil
+    def metinleri_yaz(self):
+        """Bütün sabit yazıları seçili dilde yazar; dinamik olanları (özet, önizleme) yeniler."""
+        self.setWindowTitle(t("gui.baslik"))
+        if not self.dosya:
+            self.dosya_etiket.setText(t("gui.dosya_yok"))
+        self.sec_btn.setText(t("gui.dosya_sec"))
+        self.dil_etiket.setText(t("gui.dil"))
+        for anahtar, etiket in self.form_etiketleri.items():
+            etiket.setText(t(anahtar))
+        self.sayfalar.setPlaceholderText(t("gui.sayfalar_ipucu"))
+        self.dz.setTitle(t("gui.sayfa_duzeni"))
+        for b in self.duzen_grup.buttons():
+            b.setText(core.duzen_adi(b.property("duzen")))
+        self.arkali.setText(t("gui.arkali"))
+        self.yon_grubu.setTitle(t("gui.yon_grubu"))
+        self.arka_180.setText(t("gui.arka_180"))
+        self.arka_180.setToolTip(t("gui.arka_180_ipucu"))
+        self.deneme_btn.setText(t("gui.deneme_btn"))
+        self.yazdir_btn.setText(t("gui.yazdir"))
+        self.temizle_btn.setText(t("gui.kuyrugu_temizle"))
+        self.onizlemeyi_yaz()
+
+    def dil_degisti(self, _):
+        kod = self.dil_secim.currentData()
+        if kod == dil.aktif():
+            return
+        if self._thread and self._thread.isRunning():
+            self.dil_secim.blockSignals(True)
+            self.dil_secim.setCurrentIndex(self.dil_secim.findData(dil.aktif()))
+            self.dil_secim.blockSignals(False)
+            QMessageBox.information(self, t("gui.baslik"), t("gui.dil_mesgul"))
+            return
+        core.dil_kaydet(kod)
+        qt_dilini_ayarla()
+        self.metinleri_yaz()
+        self.durum_guncelle()
 
     # ---------------------------------------------------------- yardımcılar
     def arkada(self, fn, *args, bitti=None, **kw):
@@ -188,7 +253,7 @@ class Pencere(QMainWindow):
         if self._deneme_onceki is not None or (self.is_ and self.is_.deneme):
             self.is_, self._deneme_onceki = self._deneme_onceki, None
         self.mesgul(False)
-        QMessageBox.warning(self, "Yazdır", m)
+        QMessageBox.warning(self, t("gui.baslik"), m)
 
     def mesgul(self, evet, metin=""):
         self.yazdir_btn.setEnabled(not evet and self.is_ is not None)
@@ -200,12 +265,12 @@ class Pencere(QMainWindow):
             d = core.yazici_durumu(self.yazici.currentText() or None)
         except Exception:
             return
-        kuyruk = f" • Kuyrukta {len(d['kuyruk'])} iş" if d["kuyruk"] else ""
+        kuyruk = t("gui.kuyrukta", n=len(d["kuyruk"])) if d["kuyruk"] else ""
         ham = d["durum"]
-        durum = ("hazır" if " is idle" in ham else "yazdırıyor" if "now printing" in ham
-                 else "devre dışı" if "disabled" in ham else ham)
+        durum = (t("gui.yazici_hazir") if " is idle" in ham else t("gui.yazici_basiyor") if "now printing" in ham
+                 else t("gui.yazici_kapali") if "disabled" in ham else ham)
         if not (self._thread and self._thread.isRunning()):
-            self.statusBar().showMessage(f"Yazıcı {d['yazici']}: {durum}{kuyruk}")
+            self.statusBar().showMessage(t("gui.yazici_durum", ad=d["yazici"], durum=durum, kuyruk=kuyruk))
 
     # ---------------------------------------------------------- sürükle-bırak
     def dragEnterEvent(self, e):
@@ -219,7 +284,8 @@ class Pencere(QMainWindow):
 
     # ---------------------------------------------------------- akış
     def dosya_sec(self):
-        yol, _ = QFileDialog.getOpenFileName(self, "Yazdırılacak dosya", str(Path.home()), UZANTILAR)
+        yol, _ = QFileDialog.getOpenFileName(self, t("gui.dosya_diyalog"), str(Path.home()),
+                                             t("gui.uzantilar", desen=DESEN))
         if yol:
             self.dosya_ac(yol)
 
@@ -242,7 +308,7 @@ class Pencere(QMainWindow):
         if not self.dosya:
             return
         self.is_ = None
-        self.mesgul(True, "Hazırlanıyor…")
+        self.mesgul(True, t("gui.hazirlaniyor"))
         if not self.arkada(self._hazirla, bitti=self.hazir):
             QTimer.singleShot(400, self.ayar_degisti)
 
@@ -252,23 +318,29 @@ class Pencere(QMainWindow):
         return is_, core.onizleme(is_, 50, en_fazla=60)
 
     def hazir(self, sonuc):
-        self.is_, resimler = sonuc
+        self.is_, self._resimler = sonuc
+        self._gosterilen = self.is_
         self.mesgul(False)
+        self.onizlemeyi_yaz()
+
+    def onizlemeyi_yaz(self):
+        """Önizleme listesini ve özeti (gösterilen iş için) seçili dilde yazar."""
+        s = getattr(self, "_gosterilen", None)
         self.liste.clear()
-        for i, r in enumerate(resimler):
-            if self.is_.arkali_onlu:
-                kagit = i // 2 + 1
-                ad = f"{kagit}. kâğıt — {'ön' if i % 2 == 0 else 'arka'}"
+        if not s:
+            self.ozet.setText("")
+            return
+        for i, r in enumerate(self._resimler):
+            if s.arkali_onlu:
+                ad = t("gui.kagit_on" if i % 2 == 0 else "gui.kagit_arka", n=i // 2 + 1)
             else:
-                ad = f"{i + 1}. kâğıt"
-            it = QListWidgetItem(QIcon(QPixmap(str(r))), ad)
-            self.liste.addItem(it)
-        s = self.is_
-        satir = [f"{s.yuz_sayisi} yüz, {s.kagit} kâğıt"]
+                ad = t("gui.kagit", n=i + 1)
+            self.liste.addItem(QListWidgetItem(QIcon(QPixmap(str(r))), ad))
+        satir = [t("gui.ozet_sayilar", yuz=s.yuz_sayisi, kagit=s.kagit)]
         if s.arkali_onlu:
-            satir.append(f"Önce {s.on_sayisi} ön yüz basılır, sonra kâğıtları geri koyduğunuzda {s.arka_sayisi} arka yüz.")
+            satir.append(t("gui.ozet_arkali", on=s.on_sayisi, arka=s.arka_sayisi))
         if s.duzen == "kitapcik":
-            satir.append("Kâğıtları sırayla iç içe koyup ortadan katlayın.")
+            satir.append(t("gui.ozet_kitapcik"))
         self.ozet.setText("\n".join(satir))
 
     def arka_180_degisti(self, deger):
@@ -281,26 +353,24 @@ class Pencere(QMainWindow):
         try:
             d = core.deneme_hazirla(self.yazici.currentText() or None)
         except core.YazdirHata as e:
-            QMessageBox.warning(self, "Yazdır", str(e))
+            QMessageBox.warning(self, t("gui.baslik"), str(e))
             return
         self._deneme_onceki = self.is_
         self.is_ = d
-        if not self.yazdir(baslik="Yön deneme sayfası"):
+        if not self.yazdir(baslik=t("gui.deneme_baslik")):
             self.is_, self._deneme_onceki = self._deneme_onceki, None
 
     def _deneme_sonucu(self):
         self.is_, self._deneme_onceki = self._deneme_onceki, None
         self.yazdir_btn.setEnabled(self.is_ is not None)
-        c = QMessageBox.question(self, "Yön denemesi", core.DENEME_SORUSU)
+        c = QMessageBox.question(self, t("gui.yon_denemesi"), t("deneme.soru"))
         yeni = core.deneme_sonucu(c == QMessageBox.Yes)
         self.arka_180.blockSignals(True)
         self.arka_180.setChecked(yeni)
         self.arka_180.blockSignals(False)
         QMessageBox.information(
-            self, "Yön denemesi",
-            "Ayar doğru, değiştirilmedi." if c == QMessageBox.Yes else
-            "Ayar değiştirildi: arka yüzler bundan sonra 180° çevrilerek basılacak." if yeni else
-            "Ayar değiştirildi: arka yüzler bundan sonra çevrilmeden basılacak.")
+            self, t("gui.yon_denemesi"),
+            t("gui.ayar_dogru") if c == QMessageBox.Yes else t("gui.ayar_180") if yeni else t("gui.ayar_duz"))
         if c != QMessageBox.Yes:
             self.ayar_degisti()
 
@@ -310,57 +380,51 @@ class Pencere(QMainWindow):
             return False
         if s.arkali_onlu:
             cevap = QMessageBox.question(
-                self, baslik or "Ön yüzler",
-                f"Tepsiye en az {s.kagit} boş kâğıt koyun.\n\n1. adım: {s.on_sayisi} ön yüz basılacak. Başlansın mı?")
+                self, baslik or t("gui.on_yuzler"), t("gui.on_soru", kagit=s.kagit, on=s.on_sayisi))
             if cevap != QMessageBox.Yes:
                 return False
             self._bas("on", sonra=self._arka_sor)
         else:
-            if QMessageBox.question(self, "Yazdır", f"{s.kagit} kâğıt basılacak. Başlansın mı?") != QMessageBox.Yes:
+            if QMessageBox.question(self, t("gui.baslik"), t("gui.tek_soru", kagit=s.kagit)) != QMessageBox.Yes:
                 return False
             self._bas("hepsi")
         return True
 
     def _bas(self, adim, sonra=None):
-        self.mesgul(True, {"on": "Ön yüzler basılıyor…", "arka": "Arka yüzler basılıyor…"}.get(adim, "Basılıyor…"))
+        self.mesgul(True, t({"on": "gui.on_basiliyor", "arka": "gui.arka_basiliyor"}.get(adim, "gui.basiliyor")))
         if not self.arkada(core.bas, self.is_, adim, bitti=lambda r: self._basildi(adim, r, sonra)):
             self.mesgul(False)
-            QMessageBox.warning(self, "Yazdır", "Başka bir işlem sürüyor; birkaç saniye sonra yeniden deneyin.")
+            QMessageBox.warning(self, t("gui.baslik"), t("gui.mesgul"))
 
     def _basildi(self, adim, sonuc, sonra):
         self.mesgul(False)
         if sonuc == "kagit_yok":
-            c = QMessageBox.warning(
-                self, "Kâğıt yok",
-                "Yazıcı 'kâğıt yok' diyor.\n\nKâğıdı çıkarıp düzgünce yeniden yerleştirin. Olmazsa yazıcıyı kapatıp açın.\n\n"
-                "Baskı kuyrukta bekliyor; kâğıt algılanınca kendiliğinden devam eder.\n"
-                "İptal etmek isterseniz 'Kuyruğu temizle'ye basın.",
-                QMessageBox.Ok)
+            QMessageBox.warning(self, t("gui.kagit_yok_baslik"), t("gui.kagit_yok"), QMessageBox.Ok)
             return
         if sonuc == "zaman_asimi":
-            QMessageBox.information(self, "Yazdır", "Baskı uzun sürüyor; yazıcıyı kontrol edin.")
+            QMessageBox.information(self, t("gui.baslik"), t("gui.zaman_asimi"))
             return
         if sonra:
             sonra()
         elif self.is_.deneme:
             self._deneme_sonucu()
         else:
-            self.statusBar().showMessage("Baskı tamamlandı.", 8000)
-            QMessageBox.information(self, "Yazdır", "Baskı tamamlandı." + (
-                "\n\nKitapçık: kâğıtları sırayla iç içe koyup ortadan katlayın." if self.is_.duzen == "kitapcik" else ""))
+            self.statusBar().showMessage(t("gui.bitti"), 8000)
+            QMessageBox.information(self, t("gui.baslik"), t("gui.bitti") + (
+                t("gui.bitti_kitapcik") if self.is_.duzen == "kitapcik" else ""))
 
     def _arka_sor(self):
         s = self.is_
         if not s.arka_sayisi:
-            QMessageBox.information(self, "Yazdır", "Baskı tamamlandı.")
+            QMessageBox.information(self, t("gui.baslik"), t("gui.bitti"))
             return
         m = QMessageBox(self)
-        m.setWindowTitle("Kâğıtları çevirin")
+        m.setWindowTitle(t("gui.cevir_baslik"))
         m.setIcon(QMessageBox.Information)
-        m.setText("Ön yüzler basıldı.")
-        m.setInformativeText(s.kagit_talimati() + "\n\nHazır olunca 'Devam'a basın.")
-        devam = m.addButton("Devam — arka yüzleri bas", QMessageBox.AcceptRole)
-        m.addButton("Vazgeç", QMessageBox.RejectRole)
+        m.setText(t("gui.on_basildi"))
+        m.setInformativeText(s.kagit_talimati() + t("gui.hazir_olunca"))
+        devam = m.addButton(t("gui.devam"), QMessageBox.AcceptRole)
+        m.addButton(t("gui.vazgec"), QMessageBox.RejectRole)
         m.exec()
         if m.clickedButton() == devam:
             self._bas("arka")
@@ -369,7 +433,7 @@ class Pencere(QMainWindow):
             self.yazdir_btn.setEnabled(self.is_ is not None)
 
     def kuyrugu_temizle(self):
-        if QMessageBox.question(self, "Kuyruk", "Yazıcı kuyruğundaki tüm işler iptal edilsin mi?") == QMessageBox.Yes:
+        if QMessageBox.question(self, t("gui.kuyruk"), t("gui.kuyruk_soru")) == QMessageBox.Yes:
             core.kuyrugu_temizle(self.yazici.currentText() or None)
             self.durum_guncelle()
 
@@ -378,6 +442,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Yazdır")
     app.setDesktopFileName("yazdir")
+    qt_dilini_ayarla()
     p = Pencere(sys.argv[1] if len(sys.argv) > 1 else None)
     p.show()
     sys.exit(app.exec())

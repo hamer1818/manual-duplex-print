@@ -31,6 +31,9 @@ from pathlib import Path
 from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
+from . import dil
+from .dil import t
+
 A4_W, A4_H = 595.28, 841.89
 
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "yazdir"
@@ -39,12 +42,11 @@ CONFIG_FILE = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) /
 OFFICE_EXT = {".doc", ".docx", ".odt", ".rtf", ".txt", ".ppt", ".pptx", ".odp", ".xls", ".xlsx", ".ods"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 
-DUZENLER = {
-    "1": "Her yüze 1 sayfa",
-    "2": "Her yüze 2 sayfa (yan yana)",
-    "4": "Her yüze 4 sayfa",
-    "kitapcik": "Kitapçık (A5, ortadan katlanır)",
-}
+DUZENLER = ("1", "2", "4", "kitapcik")
+
+
+def duzen_adi(duzen: str) -> str:
+    return t(f"duzen.{duzen}")
 
 
 class YazdirHata(Exception):
@@ -64,6 +66,15 @@ def ayar_kaydet(**kv) -> None:
     a.update(kv)
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(a, ensure_ascii=False, indent=2))
+
+
+def dil_kaydet(kod: str) -> str:
+    """Arayüz dilini seçer ve kaydeder."""
+    ayar_kaydet(dil=dil.ayarla(kod))
+    return dil.aktif()
+
+
+dil.ayarla(ayarlar().get("dil"))
 
 
 def yazicilar() -> list[str]:
@@ -87,7 +98,7 @@ def varsayilan_yazici() -> str | None:
 def pdfe_cevir(kaynak: Path, hedef_klasor: Path) -> Path:
     kaynak = Path(kaynak).expanduser().resolve()
     if not kaynak.exists():
-        raise YazdirHata(f"Dosya bulunamadı: {kaynak}")
+        raise YazdirHata(t("hata.dosya_yok", yol=kaynak))
     ext = kaynak.suffix.lower()
     hedef = hedef_klasor / "kaynak.pdf"
     if ext == ".pdf":
@@ -100,14 +111,14 @@ def pdfe_cevir(kaynak: Path, hedef_klasor: Path) -> Path:
             capture_output=True, text=True, timeout=300)
         cikti = hedef_klasor / (kaynak.stem + ".pdf")
         if not cikti.exists():
-            raise YazdirHata(f"LibreOffice dönüştüremedi: {r.stderr.strip() or r.stdout.strip()}")
+            raise YazdirHata(t("hata.libreoffice", ayrinti=r.stderr.strip() or r.stdout.strip()))
         cikti.rename(hedef)
     elif ext in IMAGE_EXT:
         r = subprocess.run(["magick", str(kaynak), "-auto-orient", str(hedef)], capture_output=True, text=True)
         if r.returncode != 0:
-            raise YazdirHata(f"Resim PDF'e çevrilemedi: {r.stderr.strip()}")
+            raise YazdirHata(t("hata.resim", ayrinti=r.stderr.strip()))
     else:
-        raise YazdirHata(f"Desteklenmeyen dosya türü: {ext}")
+        raise YazdirHata(t("hata.tur", ext=ext))
     return hedef
 
 
@@ -126,9 +137,9 @@ def sayfa_secimi(metin: str | None, toplam: int) -> list[int]:
         elif parca.isdigit():
             a = b = int(parca)
         else:
-            raise YazdirHata(f"Sayfa aralığı anlaşılamadı: '{parca}' (örnek: 1-5,8,10-)")
+            raise YazdirHata(t("hata.aralik_anlasilmadi", parca=parca))
         if a < 1 or b > toplam or a > b:
-            raise YazdirHata(f"Geçersiz sayfa aralığı: '{parca}' (belge {toplam} sayfa)")
+            raise YazdirHata(t("hata.aralik_gecersiz", parca=parca, toplam=toplam))
         sonuc.extend(range(a, b + 1))
     return sonuc
 
@@ -142,15 +153,15 @@ def _yerlestir(hedef: PageObject, kaynak: PageObject, x: float, y: float, w: flo
     sw, sh = float(kutu.width), float(kutu.height)
     duz = min(w / sw, h / sh)
     yan = min(w / sh, h / sw)
-    t = Transformation().translate(-x0, -y0)
+    donusum = Transformation().translate(-x0, -y0)
     if yan > duz * 1.05:
         k = yan
-        t = t.rotate(90).translate(sh, 0)
+        donusum = donusum.rotate(90).translate(sh, 0)
         sw, sh = sh, sw
     else:
         k = duz
-    t = t.scale(k).translate(x + (w - sw * k) / 2, y + (h - sh * k) / 2)
-    hedef.merge_transformed_page(kaynak, t)
+    donusum = donusum.scale(k).translate(x + (w - sw * k) / 2, y + (h - sh * k) / 2)
+    hedef.merge_transformed_page(kaynak, donusum)
 
 
 def _yuz(slotlar, sayfalar, yatay: bool) -> PageObject:
@@ -186,7 +197,7 @@ def yuzleri_olustur(reader: PdfReader, secim: list[int], duzen: str) -> list[Pag
             yuzler.append(_yuz(sl, [sayfalar[n - 2 * i - 1], sayfalar[2 * i]], True))
             yuzler.append(_yuz(sl, [sayfalar[2 * i + 1], sayfalar[n - 2 * i - 2]], True))
         return yuzler
-    raise YazdirHata(f"Bilinmeyen düzen: {duzen}")
+    raise YazdirHata(t("hata.duzen", liste=", ".join(DUZENLER)))
 
 
 def _yatay_duzen(duzen: str) -> bool:
@@ -258,44 +269,42 @@ class Is:
         if not is_id or is_id == "son":
             isler = sorted((CACHE / "isler").glob("*/is.json"))
             if not isler:
-                raise YazdirHata("Hazırlanmış iş yok. Önce 'yazdir hazirla DOSYA' çalıştırın.")
+                raise YazdirHata(t("hata.is_yok"))
             yol = isler[-1]
         else:
             yol = CACHE / "isler" / is_id / "is.json"
             if not yol.exists():
-                raise YazdirHata(f"İş bulunamadı: {is_id}")
+                raise YazdirHata(t("hata.is_bulunamadi", id=is_id))
         return cls(**json.loads(yol.read_text()))
 
     def ozet(self) -> str:
-        s = [f"İş: {self.id}",
-             f"Kaynak: {self.kaynak} ({self.kaynak_sayfa} sayfa, {self.secilen_sayfa} sayfa seçildi)",
-             f"Düzen: {DUZENLER[self.duzen]}" + (f", {self.kopya} kopya" if self.kopya > 1 else ""),
-             f"Baskı: {'elle arkalı önlü' if self.arkali_onlu else 'tek yüz'} — {self.yuz_sayisi} yüz, {self.kagit} kâğıt",
-             f"Yazıcı: {self.yazici}"]
+        s = [t("ozet.is", id=self.id),
+             t("ozet.kaynak", yol=self.kaynak, toplam=self.kaynak_sayfa, secilen=self.secilen_sayfa),
+             t("ozet.duzen", ad=duzen_adi(self.duzen)) + (t("ozet.kopya", n=self.kopya) if self.kopya > 1 else ""),
+             t("ozet.baski_arkali" if self.arkali_onlu else "ozet.baski_tek", yuz=self.yuz_sayisi, kagit=self.kagit),
+             t("ozet.yazici", ad=self.yazici)]
         if self.arkali_onlu:
-            s.append(f"Adım 1: {self.on_sayisi} ön yüz • Adım 2: {self.arka_sayisi} arka yüz (ters sırayla)")
+            s.append(t("ozet.adimlar", on=self.on_sayisi, arka=self.arka_sayisi))
             if self.arka_bos_sayfa:
-                s.append("Not: Son kâğıdın arkası boş kalacak (kâğıt ayırmaya gerek yok).")
+                s.append(t("ozet.bos_arka"))
             elif self.son_kagidi_ayir:
-                s.append("Not: Son kâğıdın arkası boş kalacak; arka yüzden önce o kâğıt ayrılmalı.")
-        s.append(f"Durum: {self.durum}")
+                s.append(t("ozet.son_kagidi_ayir"))
+        s.append(t("ozet.durum", durum=t(f"durum.{self.durum}")))
         return "\n".join(s)
 
     def kagit_talimati(self) -> str:
-        nasil = "yönünü değiştirmeden (çevirmeden, döndürmeden), basılı yüzü aşağıda tepsiye geri koyun."
         if self.son_kagidi_ayir and not self.arka_bos_sayfa:  # eski işler
-            return (f"Ön yüzler basıldı. Önce tomarın EN ÜSTÜNDEKİ (en son basılan) kâğıdı ayırın — onun arkası "
-                    f"boş kalacak. Kalan {self.arka_sayisi} kâğıdı " + nasil)
-        t = f"Ön yüzler basıldı. Çıkan {self.on_sayisi} kâğıdın HEPSİNİ " + nasil
+            return t("talimat.eski", n=self.arka_sayisi) + t("talimat.nasil")
+        m = t("talimat.hepsi", n=self.on_sayisi) + t("talimat.nasil")
         if self.arka_bos_sayfa:
-            t += " Boş kâğıt ayırmayın: en son basılan kâğıt arkası boş olarak geçecek."
-        return t
+            m += t("talimat.bos_arka")
+        return m
 
 
 def hazirla(dosya: str, duzen: str = "1", arkali_onlu: bool = False, sayfalar: str | None = None,
             kopya: int = 1, yazici: str | None = None) -> Is:
     if duzen not in DUZENLER:
-        raise YazdirHata(f"Düzen şunlardan biri olmalı: {', '.join(DUZENLER)}")
+        raise YazdirHata(t("hata.duzen", liste=", ".join(DUZENLER)))
     if duzen == "kitapcik":
         arkali_onlu = True
     is_id = time.strftime("%Y%m%d-%H%M%S")
@@ -347,13 +356,13 @@ def _deneme_yuzu(yazi: str) -> PageObject:
             NameObject("/BaseFont"): NameObject("/Helvetica-Bold"),
             NameObject("/Encoding"): NameObject("/WinAnsiEncoding")})})})
 
-    def metin(t: str, boyut: int, y: float) -> bytes:
-        x = (A4_W - len(t) * boyut * 0.68) / 2  # kaba ortalama
-        return f"BT /F1 {boyut} Tf 1 0 0 1 {x:.1f} {y} Tm (".encode() + t.encode("cp1252") + b") Tj ET\n"
+    def metin(m: str, boyut: int, y: float) -> bytes:
+        x = (A4_W - len(m) * boyut * 0.68) / 2  # kaba ortalama
+        return f"BT /F1 {boyut} Tf 1 0 0 1 {x:.1f} {y} Tm (".encode() + m.encode("cp1252") + b") Tj ET\n"
 
     icerik = DecodedStreamObject()
     icerik.set_data(b"0 g\n297.6 790 m 217.6 650 l 377.6 650 l f\n272.6 500 50 150 re f\n"
-                    + metin("ÜST", 40, 440)
+                    + metin(t("deneme.ust"), 40, 440)
                     + metin(yazi, 72, 300))
     p[NameObject("/Contents")] = icerik
     return p
@@ -363,15 +372,11 @@ def deneme_hazirla(yazici: str | None = None) -> Is:
     """Arka yüz yönünü belirlemek için tek kâğıtlık arkalı önlü deneme işi."""
     yol = CACHE / "deneme.pdf"
     yol.parent.mkdir(parents=True, exist_ok=True)
-    _yaz([_deneme_yuzu("ÖN YÜZ"), _deneme_yuzu("ARKA YÜZ")], yol)
+    _yaz([_deneme_yuzu(t("deneme.on")), _deneme_yuzu(t("deneme.arka"))], yol)
     is_ = hazirla(str(yol), "1", True, yazici=yazici)
     is_.deneme = True
     is_.kaydet()
     return is_
-
-
-DENEME_SORUSU = ("Kâğıdı kitap sayfası çevirir gibi yan kenarından çevirin.\n"
-                 "Ön yüzdeki ok yukarıyı gösterirken arka yüzdeki ok da YUKARIYI gösteriyor mu?")
 
 
 def deneme_sonucu(arka_dogru: bool) -> bool:
@@ -401,7 +406,7 @@ def yazici_durumu(yazici: str | None = None) -> dict:
     uyari = re.search(r"Alerts:\s*(.*)", p)
     return {
         "yazici": yazici,
-        "durum": p.splitlines()[0] if p else "yazıcı bulunamadı",
+        "durum": p.splitlines()[0] if p else t("hata.yazici_yok"),
         "uyarilar": uyari.group(1).strip() if uyari else "",
         "kuyruk": [l.split()[0] for l in o.splitlines() if l.strip()],
         "son_hatalar": son_hatalar(dakika=5),
@@ -425,7 +430,7 @@ def _lp(yol: Path, yazici: str) -> str:
                        capture_output=True, text=True)
     m = re.search(r"request id is (\S+)", r.stdout)
     if r.returncode != 0 or not m:
-        raise YazdirHata(f"Yazıcıya gönderilemedi: {r.stderr.strip() or r.stdout.strip()}")
+        raise YazdirHata(t("hata.gonderilemedi", ayrinti=r.stderr.strip() or r.stdout.strip()))
     return m.group(1)
 
 
@@ -449,23 +454,23 @@ def bekle(cups_is: str, baslangic: str, zaman_asimi: int = 900, ilerleme=None) -
 def bas(is_: Is, adim: str, bekleyerek: bool = True, ilerleme=None) -> str:
     """adim: 'hepsi' (tek yüz), 'on' veya 'arka' (arkalı önlü)."""
     if not is_.yazici:
-        raise YazdirHata("Yazıcı bulunamadı.")
+        raise YazdirHata(t("hata.yazici_yok"))
     if adim == "hepsi":
         if is_.arkali_onlu:
-            raise YazdirHata("Bu iş arkalı önlü; önce 'on', sonra 'arka' basılmalı.")
+            raise YazdirHata(t("hata.arkali_is"))
         dosya = is_.dosya("yuzler.pdf")
     elif adim == "on":
         if not is_.arkali_onlu:
-            raise YazdirHata("Bu iş tek yüz; 'hepsi' kullanın.")
+            raise YazdirHata(t("hata.tek_yuz_is"))
         dosya = is_.dosya("on.pdf")
     elif adim == "arka":
         if not is_.arkali_onlu or not is_.arka_sayisi:
-            raise YazdirHata("Bu işin arka yüzü yok.")
+            raise YazdirHata(t("hata.arka_yok"))
         dosya = is_.dosya("arka.pdf")
     else:
-        raise YazdirHata(f"Bilinmeyen adım: {adim}")
+        raise YazdirHata(t("hata.adim", adim=adim))
     if subprocess.run(["lpstat", "-o", is_.yazici], capture_output=True, text=True).stdout.strip():
-        raise YazdirHata("Yazıcı kuyruğunda bekleyen iş var. Önce kuyruğu temizleyin ya da bitmesini bekleyin.")
+        raise YazdirHata(t("hata.kuyruk_dolu"))
 
     baslangic = time.strftime("%Y-%m-%d %H:%M:%S")
     cups_is = _lp(dosya, is_.yazici)
