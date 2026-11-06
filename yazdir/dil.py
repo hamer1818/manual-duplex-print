@@ -155,6 +155,14 @@ METINLER = {
                                  "Emin değilseniz 'Yön deneme sayfası' ile bir kez deneyin.",
                            "en": "Tick this if the back sides come out upside down. "
                                  "If unsure, print the 'Orientation test page' once."},
+    "gui.arka_180_onay_ac": {"tr": "Bu ayar yön deneme sayfasıyla belirlenir; yanlış olursa arka yüzler baş aşağı çıkar.\n\n"
+                                   "Arka yüzler bundan sonra 180° ÇEVRİLEREK basılsın mı?",
+                             "en": "This setting is found with the orientation test page; if it is wrong, the backs come "
+                                   "out upside down.\n\nPrint back sides ROTATED 180° from now on?"},
+    "gui.arka_180_onay_kapat": {"tr": "Bu ayar yön deneme sayfasıyla belirlenir; yanlış olursa arka yüzler baş aşağı çıkar.\n\n"
+                                      "Arka yüzler bundan sonra ÇEVRİLMEDEN basılsın mı?",
+                                "en": "This setting is found with the orientation test page; if it is wrong, the backs come "
+                                      "out upside down.\n\nPrint back sides WITHOUT rotation from now on?"},
     "gui.deneme_btn": {"tr": "Yön deneme sayfası (1 kâğıt)", "en": "Orientation test page (1 sheet)"},
     "gui.yon_grubu": {"tr": "Arkalı önlü yönü", "en": "Two-sided orientation"},
     "gui.kuyrukta": {"tr": " • Kuyrukta {n} iş", "en": " • jobs in queue: {n}"},

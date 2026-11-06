@@ -437,6 +437,17 @@ class Pencere(QMainWindow):
 
     # ---------------------------------------------------------- yön denemesi
     def arka_180_degisti(self, deger):
+        """Yön ayarı deneme sayfasıyla bulunur; yanlışlıkla bir tıkla değişmesin diye onay istenir
+        (bir kez böyle değişmiş ve arka yüzler ters basılmıştı)."""
+        cevap = QMessageBox.question(
+            self, t("gui.yon_grubu"), t("gui.arka_180_onay_ac" if deger else "gui.arka_180_onay_kapat"),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if cevap != QMessageBox.Yes:
+            self.arka_180.blockSignals(True)
+            self.arka_180.setChecked(not deger)
+            self.arka_180.blockSignals(False)
+            return
+        core.log.info("arka_180 elle değiştirildi: %s", bool(deger))
         core.ayar_kaydet(arka_180=bool(deger))
         self.ayar_degisti()
 

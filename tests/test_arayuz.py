@@ -215,6 +215,22 @@ class DenemeVeDil(Temel):
         self.assertTrue(bekle(lambda: p.is_ is not None and p.is_ is not belge_isi and not p.is_.deneme))
         self.assertTrue(p.is_.arka_180)
 
+    def test_yon_ayari_onaysiz_degismez(self):
+        """Ayar kutusuna yanlışlıkla tıklamak ayarı değiştirmemeli (bir kez böyle değişmişti)."""
+        SahteCups().kur(self)
+        core.ayar_kaydet(arka_180=True)
+        d = Diyaloglar(self, cevap={"Arkalı önlü yönü": QMessageBox.No})
+        p = self.pencere()
+        self.assertTrue(p.arka_180.isChecked())
+        p.arka_180.click()
+        self.assertTrue(p.arka_180.isChecked(), "vazgeçilince kutu eski haline dönmeli")
+        self.assertIs(core.ayarlar()["arka_180"], True)
+        self.assertEqual(d.turler(), [("soru", "Arkalı önlü yönü")])
+        d.cevap = {}
+        p.arka_180.click()
+        self.assertFalse(p.arka_180.isChecked())
+        self.assertIs(core.ayarlar()["arka_180"], False)
+
     def test_dil_degisince_her_sey_cevrilir_dosya_kalir(self):
         SahteCups().kur(self)
         Diyaloglar(self)
