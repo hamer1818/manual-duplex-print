@@ -151,7 +151,10 @@ def _donustur(kaynak: Path, ext: str, hedef_klasor: Path, hedef: Path) -> None:
             raise YazdirHata(t("hata.libreoffice", ayrinti=r.stderr.strip() or r.stdout.strip()))
         cikti.rename(hedef)
     elif ext in IMAGE_EXT:
-        r = subprocess.run(["magick", str(kaynak), "-auto-orient", str(hedef)], capture_output=True, text=True)
+        arac = shutil.which("magick") or shutil.which("convert")   # ImageMagick 7 / 6 (eski Debian/Ubuntu)
+        if not arac:
+            raise YazdirHata(t("hata.resim", ayrinti="ImageMagick (magick/convert)"))
+        r = subprocess.run([arac, str(kaynak), "-auto-orient", str(hedef)], capture_output=True, text=True)
         if r.returncode != 0:
             raise YazdirHata(t("hata.resim", ayrinti=r.stderr.strip()))
 

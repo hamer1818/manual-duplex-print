@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+MimeType=application/pdf;application/msword;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.oasis.opendocument.text;application/rtf;text/plain;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.ms-powerpoint;application/vnd.oasis.opendocument.presentation;image/png;image/jpeg;image/webp;
+Actions=yazdir;
+X-KDE-Priority=TopLevel
+
+[Desktop Action yazdir]
+Name=Print (two-sided / booklet)…
+Name[tr]=Yazdır (arkalı önlü / kitapçık)…
+Icon=document-print
+Exec=yazdir-gui %f

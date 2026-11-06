@@ -1,3 +1,10 @@
 .venv/
 __pycache__/
 *.docx
+build/
+dist/
+*.egg-info/
+packaging/arch/src/
+packaging/arch/pkg/
+packaging/arch/manual-duplex-print/
+packaging/arch/*.pkg.tar.*

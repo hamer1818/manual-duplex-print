@@ -18,9 +18,23 @@ or run `yazdir dil en`. The commands are `yazdir` / `yazdir-gui` (*yazdır* is T
   warning and the job simply waits; a cancelled job is never treated as printed. If the window is
   closed (or the computer restarts) between the fronts and the backs, the app offers to continue.
 
+### Install
+One command, any distribution (Arch/CachyOS/Manjaro, Debian/Ubuntu/Mint, Fedora, openSUSE). It installs
+for your user, asks before installing missing system packages with `sudo`, and adds a menu entry and a
+Dolphin right-click action:
+```bash
+curl -fsSL https://raw.githubusercontent.com/hamer1818/manual-duplex-print/main/install.sh | sh
+```
+Arch-based distributions can build a native package instead:
 ```bash
 git clone https://github.com/hamer1818/manual-duplex-print.git
-cd manual-duplex-print && ./install.sh
+cd manual-duplex-print/packaging/arch && makepkg -si
+```
+Update: run the same command again. Uninstall: `sh ~/.local/share/manual-duplex-print/install.sh --uninstall`
+(add `--purge` to remove settings and cache too).
+
+### Command line
+```bash
 yazdir hazirla document.pdf -d 2 -a --onizleme   # prepare + preview (does not print)
 yazdir bas on --onayli                           # print fronts
 yazdir bas arka --onayli                         # print backs after reloading the stack
@@ -38,8 +52,27 @@ Otomatik arkalı önlü baskı yapamayan yazıcılar (ör. HP LaserJet 1018) iç
 - **Sayfa düzeni:** her yüze 1, 2 (yan yana) ya da 4 sayfa; **A5 kitapçık** (ortadan katlanır, sayfalar otomatik dizilir).
 - PDF, Word/LibreOffice belgeleri ve resimler.
 
+## Kurulum
+Tek komut; Arch/CachyOS/Manjaro, Debian/Ubuntu/Mint, Fedora ve openSUSE'de çalışır. Kullanıcıya kurar,
+eksik sistem paketlerini sorduktan sonra `sudo` ile kurar; uygulama menüsüne **Yazdır**, KDE Dolphin
+sağ tık menüsüne **Yazdır (arkalı önlü / kitapçık)…** ekler:
+```bash
+curl -fsSL https://raw.githubusercontent.com/hamer1818/manual-duplex-print/main/install.sh | sh
+```
+- **Güncelleme:** aynı komutu yeniden çalıştırın.
+- **Kaldırma:** `sh ~/.local/share/manual-duplex-print/install.sh --uninstall` (`--purge` ile ayarlar ve önbellek de silinir).
+- **Arch tabanlı dağıtımlarda sistem paketi olarak:**
+  ```bash
+  git clone https://github.com/hamer1818/manual-duplex-print.git
+  cd manual-duplex-print/packaging/arch && makepkg -si
+  ```
+- **Geliştirme:** depo klonundan `./install.sh` düzenlenebilir kurulum yapar; depodaki değişiklikler hemen geçerli olur.
+
+Yazıcı CUPS'ta (sistem ayarları → Yazıcılar) tanımlı olmalı. İlk arkalı önlü baskıdan önce uygulamadaki
+**Yön deneme sayfası**nı bir kez basın.
+
 ## Gereksinimler
-Linux, yazıcısı CUPS'ta tanımlı olmalı. Paketler (Arch adlarıyla; başka dağıtımlarda benzerleri):
+Kurulum betiği bunları denetler ve eksikleri kurmayı önerir. Paketler (Arch adlarıyla):
 
 - `cups` — `lp`, `lpstat`, `cancel`
 - `python-pycups` (Debian/Ubuntu: `python3-cups`) — baskı işini CUPS'tan izlemek için
@@ -47,7 +80,7 @@ Linux, yazıcısı CUPS'ta tanımlı olmalı. Paketler (Arch adlarıyla; başka 
 - `poppler` — önizleme için `pdftoppm`
 - `libreoffice` — Word/ODT/PowerPoint/Excel dosyaları için (yalnız PDF basacaksanız gerekmez)
 - `imagemagick` — resim dosyaları için
-- `pypdf` — `install.sh` sanal ortama kurar
+- `pypdf` — kurulum betiği sanal ortama kurar
 
 ## Kararlılık
 - İş durumu doğrudan CUPS'tan okunur. Kâğıt biterse, sıkışırsa, kablo çıkarsa uyarı gösterilir ve
@@ -60,14 +93,6 @@ Linux, yazıcısı CUPS'ta tanımlı olmalı. Paketler (Arch adlarıyla; başka 
 ```bash
 ./test.sh        # yazıcıya, ayarlara ve önbelleğe dokunmaz; ~2 sn
 ```
-
-## Kurulum
-```bash
-git clone https://github.com/hamer1818/manual-duplex-print.git
-cd manual-duplex-print
-./install.sh
-```
-Uygulama menüsüne **Yazdır**, KDE Dolphin sağ tık menüsüne **Yazdır (arkalı önlü / kitapçık)…** eklenir.
 
 ## Komut satırı
 ```bash

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manual-duplex-print"
+dynamic = ["version"]
+description = "Manual two-sided, 2/4-up and A5 booklet printing on Linux for printers without a duplex unit (Yazdır)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "hamer1818" }]
+keywords = ["printing", "duplex", "booklet", "cups", "linux"]
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Environment :: X11 Applications :: Qt",
+    "Topic :: Printing",
+]
+# PySide6 ve pycups bilerek burada yok: dağıtımın paketleri kullanılır (pip'ten PySide6 ~200 MB,
+# pycups derleme ister). install.sh eksikse dağıtım paketini, olmazsa pip'i dener.
+dependencies = ["pypdf>=4"]
+
+[project.urls]
+Homepage = "https://github.com/hamer1818/manual-duplex-print"
+
+[project.scripts]
+yazdir = "yazdir.cli:main"
+
+[project.gui-scripts]
+yazdir-gui = "yazdir.gui:main"
+
+[tool.setuptools]
+packages = ["yazdir"]
+
+[tool.setuptools.dynamic]
+version = { attr = "yazdir.__version__" }

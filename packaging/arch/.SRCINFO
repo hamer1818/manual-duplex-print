@@ -1,0 +1,26 @@
+pkgbase = manual-duplex-print-git
+	pkgdesc = Manual two-sided, 2/4-up and A5 booklet printing for printers without a duplex unit (Yazdır)
+	pkgver = 1.0.0
+	pkgrel = 1
+	url = https://github.com/hamer1818/manual-duplex-print
+	arch = any
+	license = MIT
+	makedepends = git
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = python
+	depends = python-pypdf
+	depends = pyside6
+	depends = python-pycups
+	depends = cups
+	depends = poppler
+	optdepends = libreoffice-fresh: Word, ODT, PowerPoint and spreadsheet files
+	optdepends = imagemagick: image files
+	provides = manual-duplex-print
+	conflicts = manual-duplex-print
+	source = git+https://github.com/hamer1818/manual-duplex-print.git
+	sha256sums = SKIP
+
+pkgname = manual-duplex-print-git
