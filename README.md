@@ -34,7 +34,7 @@ Requirements and details below (Turkish). License: MIT.
 Otomatik arkalı önlü baskı yapamayan yazıcılar (ör. HP LaserJet 1018) için yazdırma aracı.
 
 - **Elle arkalı önlü:** önce ön yüzleri basar, tomarın tamamını yönünü değiştirmeden geri koymanızı ister (kâğıt ayırmak yok), arka yüzleri doğru sırayla basar.
-- **Arka yüz yönü:** 2'li sayfa ve kitapçıkta arka yüzler 180° döndürülür. Arka yüzler yine de ters çıkarsa uygulamadaki **Yön deneme sayfası** (1 kâğıt) ile bir kez ayarlanır.
+- **Arka yüz yönü:** 2'li sayfa ve kitapçıkta arka yüzler kendiliğinden doğru yöne çevrilir. Bazı yazıcılar arka yüzü baş aşağı basar; bunu uygulamadaki **Yön deneme sayfası** (1 kâğıt) bir kez belirler ve "Yazıcım arka yüzleri ters basıyor — düzelt" ayarını kendisi açar.
 - **Sayfa düzeni:** her yüze 1, 2 (yan yana) ya da 4 sayfa; **A5 kitapçık** (ortadan katlanır, sayfalar otomatik dizilir).
 - PDF, Word/LibreOffice belgeleri ve resimler.
 

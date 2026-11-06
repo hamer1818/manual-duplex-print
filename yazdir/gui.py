@@ -164,8 +164,15 @@ class Pencere(QMainWindow):
         self.arka_180.toggled.connect(self.arka_180_degisti)
         self.deneme_btn = QPushButton(QIcon.fromTheme("document-print-preview"), "")
         self.deneme_btn.clicked.connect(self.deneme_bas)
+        self.yon_durumu = QLabel()
+        self.yon_durumu.setWordWrap(True)
+        self.yon_durumu.setTextFormat(Qt.PlainText)
+        yazi = self.yon_durumu.font()
+        yazi.setPointSizeF(yazi.pointSizeF() * 0.9)
+        self.yon_durumu.setFont(yazi)
         yk = QVBoxLayout()
         yk.addWidget(self.arka_180)
+        yk.addWidget(self.yon_durumu)
         yk.addWidget(self.deneme_btn)
         self.yon_grubu = QGroupBox()
         self.yon_grubu.setLayout(yk)
@@ -241,6 +248,7 @@ class Pencere(QMainWindow):
         self.arka_180.setText(t("gui.arka_180"))
         self.arka_180.setToolTip(t("gui.arka_180_ipucu"))
         self.deneme_btn.setText(t("gui.deneme_btn"))
+        self.yon_durumunu_yaz()
         self.yazdir_btn.setText(t("gui.yazdir"))
         self.temizle_btn.setText(t("gui.kuyrugu_temizle"))
         self.onizlemeyi_yaz()
@@ -436,6 +444,14 @@ class Pencere(QMainWindow):
         self.ozet.setText("\n".join(satir))
 
     # ---------------------------------------------------------- yön denemesi
+    def yon_durumunu_yaz(self):
+        """Kutunun altında ayarın kâğıtta ne anlama geldiğini yazar (kutunun adı tek başına yanlış anlaşıldı)."""
+        metin = t("gui.yon_acik" if self.arka_180.isChecked() else "gui.yon_kapali")
+        tarih = core.ayarlar().get("arka_180_deneme")
+        if tarih:
+            metin += t("gui.yon_deneme_tarihi", tarih=tarih)
+        self.yon_durumu.setText(metin)
+
     def arka_180_degisti(self, deger):
         """Yön ayarı deneme sayfasıyla bulunur; yanlışlıkla bir tıkla değişmesin diye onay istenir
         (bir kez böyle değişmiş ve arka yüzler ters basılmıştı)."""
@@ -448,7 +464,8 @@ class Pencere(QMainWindow):
             self.arka_180.blockSignals(False)
             return
         core.log.info("arka_180 elle değiştirildi: %s", bool(deger))
-        core.ayar_kaydet(arka_180=bool(deger))
+        core.ayar_kaydet(arka_180=bool(deger), arka_180_deneme=None)
+        self.yon_durumunu_yaz()
         self.ayar_degisti()
 
     def deneme_bas(self):
@@ -476,6 +493,7 @@ class Pencere(QMainWindow):
         self.arka_180.blockSignals(True)
         self.arka_180.setChecked(yeni)
         self.arka_180.blockSignals(False)
+        self.yon_durumunu_yaz()
         QMessageBox.information(
             self, t("gui.yon_denemesi"),
             t("gui.ayar_dogru") if c == QMessageBox.Yes else t("gui.ayar_180") if yeni else t("gui.ayar_duz"))

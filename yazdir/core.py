@@ -473,7 +473,7 @@ def deneme_hazirla(yazici: str | None = None) -> Is:
 def deneme_sonucu(arka_dogru: bool) -> bool:
     """Deneme sonucunu kaydeder; yeni arka_180 değerini döndürür."""
     yeni = bool(ayarlar().get("arka_180", False)) != (not arka_dogru)
-    ayar_kaydet(arka_180=yeni)
+    ayar_kaydet(arka_180=yeni, arka_180_deneme=time.strftime("%Y-%m-%d"))
     return yeni
 
 
