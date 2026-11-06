@@ -1,4 +1,31 @@
-# Yazdır
+# Manual Duplex Print
+
+Two-sided, 2/4-up and A5 booklet printing on Linux for printers that have no duplex unit
+(tested with an HP LaserJet 1018). A command-line tool and a Qt (PySide6) window on top of CUPS.
+The interface is in Turkish; the app is called **Yazdır** ("print") and the commands are `yazdir` / `yazdir-gui`.
+
+- **Manual duplex:** prints the fronts, tells you to put the whole stack back as it came out,
+  then prints the backs in the right order. Odd page counts need no sheet removal: the last sheet
+  passes through with an (almost) blank back.
+- **Back-side orientation:** pages are placed on A4 by the app itself; on 2-up and booklet layouts
+  the backs are rotated 180° (like HP's Windows driver). If your printer's paper path still turns
+  the backs upside down, a one-sheet **orientation test page** sets the correction once.
+- **Layouts:** 1, 2 (side by side) or 4 pages per side; **A5 booklet** (fold in the middle,
+  pages are imposed automatically). Page ranges and copies.
+- Input: PDF, Word/LibreOffice documents, images.
+
+```bash
+git clone https://github.com/hamer1818/manual-duplex-print.git
+cd manual-duplex-print && ./install.sh
+yazdir hazirla document.pdf -d 2 -a --onizleme   # prepare + preview (does not print)
+yazdir bas on --onayli                           # print fronts
+yazdir bas arka --onayli                         # print backs after reloading the stack
+```
+Requirements and details below (Turkish). License: MIT.
+
+---
+
+## Türkçe
 
 Otomatik arkalı önlü baskı yapamayan yazıcılar (ör. HP LaserJet 1018) için yazdırma aracı.
 
@@ -21,8 +48,8 @@ Kağıt hatası algılama `journalctl -u cups` kayıtlarını okur (systemd).
 
 ## Kurulum
 ```bash
-git clone https://github.com/hamer1818/yazdir.git
-cd yazdir
+git clone https://github.com/hamer1818/manual-duplex-print.git
+cd manual-duplex-print
 ./install.sh
 ```
 Uygulama menüsüne **Yazdır**, KDE Dolphin sağ tık menüsüne **Yazdır (arkalı önlü / kitapçık)…** eklenir.
