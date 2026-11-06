@@ -1,5 +1,16 @@
-"""Yazdır — pencereli uygulama (PySide6)."""
+"""Yazdır — pencereli uygulama (PySide6).
+
+Kararlılık kuralları (bunları bozan hatalar yaşandı):
+- Uzun işler (hazırlama, baskı) işçi iş parçacığında çalışır; sonuçları ve uyarıları Pencere'nin
+  METOTLARINA bağlı sinyallerle gelir. Lambda'ya bağlanan sinyal PySide6'da işçi iş parçacığında
+  çalışır ve oradan açılan pencereler görünmez (arka yüz sorusunun hiç çıkmaması böyle olmuştu).
+- Baskı sürerken ayarlar kilitlidir; baskı akışı kendi iş nesnesini taşır, self.is_'e güvenmez.
+- Baskı sonucu CUPS'tan okunur (core.izle): kâğıt bitmesi, bağlantı kopması akışı bitirmez, uyarı
+  gösterilir ve beklenir; iptal edilen iş "basıldı" sayılmaz.
+- Yarım kalan iş (ör. ön yüzler basıldı, pencere kapandı) uygulama yeniden açılınca sorulur.
+"""
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QLibraryInfo, QObject, QSize, Qt, QThread, QTimer, QTranslator, Signal
@@ -33,12 +44,17 @@ def qt_dilini_ayarla():
             _qt_cevirmen = c
 
 
+def gunluk_yolu() -> Path:
+    return core.CACHE / "yazdir.log"
+
+
 class Isci(QObject):
     """Uzun işlemleri arayüzü dondurmadan çalıştırır."""
     bitti = Signal(object)
     hata = Signal(str)
+    bildirim = Signal(object)   # baskı sürerken yazıcı uyarısı (kod ya da None)
 
-    def __init__(self, fn, *args, **kw):
+    def __init__(self, fn, args, kw):
         super().__init__()
         self.fn, self.args, self.kw = fn, args, kw
 
@@ -46,8 +62,10 @@ class Isci(QObject):
         try:
             self.bitti.emit(self.fn(*self.args, **self.kw))
         except core.YazdirHata as e:
+            core.log.warning("hata: %s", e)
             self.hata.emit(str(e))
         except Exception as e:  # beklenmeyen hatalar da kullanıcıya gösterilsin
+            core.log.exception("işçide beklenmeyen hata")
             self.hata.emit(f"{type(e).__name__}: {e}")
 
 
@@ -56,11 +74,20 @@ class Pencere(QMainWindow):
         super().__init__()
         self.setWindowIcon(QIcon.fromTheme("document-print"))
         self.resize(980, 680)
-        self.is_ = None
+        self.is_ = None              # basılmaya hazır iş (hazırlanırken None)
+        self._gosterilen = None      # önizlemesi gösterilen iş
+        self._resimler = []          # son önizleme resimleri (dil değişince etiketler yeniden yazılır)
         self.dosya = None
         self._thread = None
+        self._isci = None
+        self._bitti_cb = None
+        self._nesil = 0              # her ayar değişikliğinde artar; eski hazırlık sonuçları atılır
+        self._dur = threading.Event()  # pencere kapanırken baskı izlemeyi durdurur
+        self._baski_suruyor = False
+        self._imlec = False
+        self._uyari_kutu = None
+        self._sonra_ac = None        # yarım iş bitince açılacak dosya
         self._deneme_onceki = None   # deneme sayfası bitince geri dönülecek iş
-        self._resimler = []          # son önizleme resimleri (dil değişince etiketler yeniden yazılır)
         self.setAcceptDrops(True)
 
         # --- dosya
@@ -90,6 +117,7 @@ class Pencere(QMainWindow):
         v = core.varsayilan_yazici()
         if v:
             self.yazici.setCurrentText(v)
+        self.yazici.currentIndexChanged.connect(self.ayar_degisti)
 
         self.duzen_grup = QButtonGroup(self)
         duzen_kutu = QVBoxLayout()
@@ -125,7 +153,7 @@ class Pencere(QMainWindow):
         self.yazdir_btn = QPushButton(QIcon.fromTheme("document-print"), "")
         self.yazdir_btn.setMinimumHeight(42)
         self.yazdir_btn.setEnabled(False)
-        self.yazdir_btn.clicked.connect(self.yazdir)
+        self.yazdir_btn.clicked.connect(lambda: self.yazdir())
 
         self.temizle_btn = QPushButton(QIcon.fromTheme("edit-clear"), "")
         self.temizle_btn.clicked.connect(self.kuyrugu_temizle)
@@ -156,6 +184,10 @@ class Pencere(QMainWindow):
         solw.setLayout(sol)
         solw.setFixedWidth(320)
 
+        # baskı sürerken kilitlenen denetimler
+        self._kilitlenecekler = [self.sec_btn, self.dil_secim, self.yazici, self.sayfalar, self.kopya, self.dz,
+                                 self.arkali, self.yon_grubu]
+
         # --- önizleme
         self.liste = QListWidget()
         self.liste.setViewMode(QListWidget.IconMode)
@@ -177,12 +209,18 @@ class Pencere(QMainWindow):
 
         self.metinleri_yaz()
         self.durum_guncelle()
-        t = QTimer(self)
-        t.timeout.connect(self.durum_guncelle)
-        t.start(5000)
+        zamanlayici = QTimer(self)
+        zamanlayici.timeout.connect(self.durum_guncelle)
+        zamanlayici.start(5000)
 
-        if dosya:
-            self.dosya_ac(dosya)
+        self._sonra_ac = dosya
+        QTimer.singleShot(200, self._baslangic)
+
+    def _baslangic(self):
+        """Önce yarım kalan baskıyı sorar; yoksa (ya da bırakılırsa) verilen dosyayı açar."""
+        if not self.yarim_isi_sor() and self._sonra_ac:
+            yol, self._sonra_ac = self._sonra_ac, None
+            self.dosya_ac(yol)
 
     # ---------------------------------------------------------- dil
     def metinleri_yaz(self):
@@ -211,7 +249,7 @@ class Pencere(QMainWindow):
         kod = self.dil_secim.currentData()
         if kod == dil.aktif():
             return
-        if self._thread and self._thread.isRunning():
+        if self._baski_suruyor:
             self.dil_secim.blockSignals(True)
             self.dil_secim.setCurrentIndex(self.dil_secim.findData(dil.aktif()))
             self.dil_secim.blockSignals(False)
@@ -222,19 +260,25 @@ class Pencere(QMainWindow):
         self.metinleri_yaz()
         self.durum_guncelle()
 
-    # ---------------------------------------------------------- yardımcılar
-    def arkada(self, fn, *args, bitti=None, **kw):
-        if self._thread and self._thread.isRunning():
+    # ---------------------------------------------------------- iş parçacığı
+    def mesgul_mu(self):
+        return bool(self._thread and self._thread.isRunning())
+
+    def arkada(self, fn, *args, bitti=None, bildirimli=False, **kw):
+        """fn'i işçi iş parçacığında çalıştırır. bildirimli: fn'e bildir= ve dur= verilir (baskı)."""
+        if self.mesgul_mu():
             return False
         self._thread = QThread(self)
-        self._isci = Isci(fn, *args, **kw)
+        self._isci = Isci(fn, args, kw)
+        if bildirimli:
+            kw["bildir"] = self._isci.bildirim.emit
+            kw["dur"] = self._dur
         self._isci.moveToThread(self._thread)
         self._thread.started.connect(self._isci.calis)
         self._bitti_cb = bitti
-        # Pencere'nin metotlarına bağlanır (lambda'ya değil): böylece sonuç ana iş parçacığında işlenir.
-        # Lambda'ya bağlanınca PySide6 onu işçi iş parçacığında çalıştırıyor, açılan pencereler görünmüyordu.
         self._isci.bitti.connect(self._isci_bitti)
         self._isci.hata.connect(self._isci_hata)
+        self._isci.bildirim.connect(self._bildirim)
         self._thread.start()
         return True
 
@@ -245,44 +289,73 @@ class Pencere(QMainWindow):
 
     def _isci_bitti(self, r):
         self._isci_bitir()
-        if self._bitti_cb:
-            self._bitti_cb(r)
+        cb, self._bitti_cb = self._bitti_cb, None
+        if cb:
+            cb(r)
 
     def _isci_hata(self, m):
         self._isci_bitir()
-        if self._deneme_onceki is not None or (self.is_ and self.is_.deneme):
-            self.is_, self._deneme_onceki = self._deneme_onceki, None
+        self._bitti_cb = None
+        baski = self._baski_suruyor
+        self._baski_bitti()
+        if baski:
+            self._denemeden_don()
         self.mesgul(False)
         QMessageBox.warning(self, t("gui.baslik"), m)
 
     def mesgul(self, evet, metin=""):
-        self.yazdir_btn.setEnabled(not evet and self.is_ is not None)
+        self.yazdir_btn.setEnabled(not evet and self.is_ is not None and not self._baski_suruyor)
+        self.deneme_btn.setEnabled(not evet and not self._baski_suruyor)
         self.statusBar().showMessage(metin)
-        QApplication.setOverrideCursor(Qt.WaitCursor) if evet else QApplication.restoreOverrideCursor()
+        if evet and not self._imlec:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            self._imlec = True
+        elif not evet and self._imlec:
+            QApplication.restoreOverrideCursor()
+            self._imlec = False
+        if not evet and not metin:
+            QTimer.singleShot(0, self.durum_guncelle)   # durum çubuğu boş kalmasın
+
+    def _kilitle(self, evet):
+        for w in self._kilitlenecekler:
+            w.setEnabled(not evet)
+        if not evet:
+            self.arkali.setEnabled(self.secili_duzen() != "kitapcik")
 
     def durum_guncelle(self):
-        try:
-            d = core.yazici_durumu(self.yazici.currentText() or None)
-        except Exception:
+        if self._baski_suruyor:
             return
-        kuyruk = t("gui.kuyrukta", n=len(d["kuyruk"])) if d["kuyruk"] else ""
-        ham = d["durum"]
-        durum = (t("gui.yazici_hazir") if " is idle" in ham else t("gui.yazici_basiyor") if "now printing" in ham
-                 else t("gui.yazici_kapali") if "disabled" in ham else ham)
-        if not (self._thread and self._thread.isRunning()):
-            self.statusBar().showMessage(t("gui.yazici_durum", ad=d["yazici"], durum=durum, kuyruk=kuyruk))
+        ad = self.yazici.currentText()
+        if not ad:
+            self.statusBar().showMessage(t("hata.yazici_yok"))
+            return
+        try:
+            y = core.yazici_bilgisi(ad)
+        except core.YazdirHata as e:
+            self.statusBar().showMessage(str(e))
+            return
+        except Exception:
+            core.log.exception("yazıcı durumu okunamadı")
+            return
+        durum = {core.YAZICI_BOSTA: t("gui.yazici_hazir"), core.YAZICI_BASIYOR: t("gui.yazici_basiyor"),
+                 core.YAZICI_DURDU: t("gui.yazici_kapali")}.get(y["durum"], str(y["durum"]))
+        if y["uyarilar"]:
+            durum += " — " + t(f"uyari.{y['uyarilar'][0]}").split(".")[0]
+        kuyruk = t("gui.kuyrukta", n=y["kuyruk"]) if y["kuyruk"] else ""
+        if not self.mesgul_mu():
+            self.statusBar().showMessage(t("gui.yazici_durum", ad=ad, durum=durum, kuyruk=kuyruk))
 
     # ---------------------------------------------------------- sürükle-bırak
     def dragEnterEvent(self, e):
-        if e.mimeData().hasUrls():
+        if e.mimeData().hasUrls() and not self._baski_suruyor:
             e.acceptProposedAction()
 
     def dropEvent(self, e):
         urls = e.mimeData().urls()
-        if urls:
+        if urls and not self._baski_suruyor:
             self.dosya_ac(urls[0].toLocalFile())
 
-    # ---------------------------------------------------------- akış
+    # ---------------------------------------------------------- hazırlama
     def dosya_sec(self):
         yol, _ = QFileDialog.getOpenFileName(self, t("gui.dosya_diyalog"), str(Path.home()),
                                              t("gui.uzantilar", desen=DESEN))
@@ -303,29 +376,48 @@ class Pencere(QMainWindow):
         self.arkali.blockSignals(True)
         if kitapcik:
             self.arkali.setChecked(True)
-        self.arkali.setEnabled(not kitapcik)
+        self.arkali.setEnabled(not kitapcik and not self._baski_suruyor)
         self.arkali.blockSignals(False)
-        if not self.dosya:
+        if not self.dosya or self._baski_suruyor:
             return
+        self._nesil += 1
         self.is_ = None
         self.mesgul(True, t("gui.hazirlaniyor"))
-        if not self.arkada(self._hazirla, bitti=self.hazir):
-            QTimer.singleShot(400, self.ayar_degisti)
+        if not self.arkada(self._hazirla, self._nesil, bitti=self.hazir):
+            QTimer.singleShot(300, self._bekleyen_hazirlik)
 
-    def _hazirla(self):
+    def _bekleyen_hazirlik(self):
+        """Önceki hazırlık bitince en son ayarlarla bir kez hazırlar."""
+        if self._baski_suruyor or not self.dosya:
+            return
+        if self.mesgul_mu():
+            QTimer.singleShot(300, self._bekleyen_hazirlik)
+        elif self.is_ is None:
+            self.arkada(self._hazirla, self._nesil, bitti=self.hazir)
+
+    def _hazirla(self, nesil):
         is_ = core.hazirla(self.dosya, self.secili_duzen(), self.arkali.isChecked(), self.sayfalar.text(),
                            self.kopya.value(), self.yazici.currentText() or None)
-        return is_, core.onizleme(is_, 50, en_fazla=60)
+        return nesil, is_, core.onizleme(is_, 50, en_fazla=60)
 
     def hazir(self, sonuc):
-        self.is_, self._resimler = sonuc
-        self._gosterilen = self.is_
+        nesil, is_, resimler = sonuc
+        if nesil != self._nesil:
+            # bu sırada ayarlar değişti: eski sonucu at, yenisi hazırlanıyor
+            core.isi_sil(is_)
+            if not self.mesgul_mu():
+                self._bekleyen_hazirlik()
+            return
+        if self._gosterilen is not None and self._gosterilen is not is_:
+            core.isi_sil(self._gosterilen)
+        self.is_ = self._gosterilen = is_
+        self._resimler = resimler
         self.mesgul(False)
         self.onizlemeyi_yaz()
 
     def onizlemeyi_yaz(self):
         """Önizleme listesini ve özeti (gösterilen iş için) seçili dilde yazar."""
-        s = getattr(self, "_gosterilen", None)
+        s = self._gosterilen
         self.liste.clear()
         if not s:
             self.ozet.setText("")
@@ -343,12 +435,13 @@ class Pencere(QMainWindow):
             satir.append(t("gui.ozet_kitapcik"))
         self.ozet.setText("\n".join(satir))
 
+    # ---------------------------------------------------------- yön denemesi
     def arka_180_degisti(self, deger):
         core.ayar_kaydet(arka_180=bool(deger))
         self.ayar_degisti()
 
     def deneme_bas(self):
-        if self._thread and self._thread.isRunning():
+        if self.mesgul_mu() or self._baski_suruyor:
             return
         try:
             d = core.deneme_hazirla(self.yazici.currentText() or None)
@@ -358,11 +451,15 @@ class Pencere(QMainWindow):
         self._deneme_onceki = self.is_
         self.is_ = d
         if not self.yazdir(baslik=t("gui.deneme_baslik")):
+            self._denemeden_don()
+
+    def _denemeden_don(self):
+        if self.is_ is not None and self.is_.deneme:
             self.is_, self._deneme_onceki = self._deneme_onceki, None
+            self.yazdir_btn.setEnabled(self.is_ is not None and not self._baski_suruyor)
 
     def _deneme_sonucu(self):
-        self.is_, self._deneme_onceki = self._deneme_onceki, None
-        self.yazdir_btn.setEnabled(self.is_ is not None)
+        self._denemeden_don()
         c = QMessageBox.question(self, t("gui.yon_denemesi"), t("deneme.soru"))
         yeni = core.deneme_sonucu(c == QMessageBox.Yes)
         self.arka_180.blockSignals(True)
@@ -374,75 +471,194 @@ class Pencere(QMainWindow):
         if c != QMessageBox.Yes:
             self.ayar_degisti()
 
+    # ---------------------------------------------------------- baskı
     def yazdir(self, baslik=None):
         s = self.is_
-        if not s:
+        if not s or self.mesgul_mu():
             return False
         if s.arkali_onlu:
             cevap = QMessageBox.question(
                 self, baslik or t("gui.on_yuzler"), t("gui.on_soru", kagit=s.kagit, on=s.on_sayisi))
             if cevap != QMessageBox.Yes:
                 return False
-            self._bas("on", sonra=self._arka_sor)
-        else:
-            if QMessageBox.question(self, t("gui.baslik"), t("gui.tek_soru", kagit=s.kagit)) != QMessageBox.Yes:
-                return False
-            self._bas("hepsi")
+            return self._bas(s, "on", sonra=self._arka_sor)
+        if QMessageBox.question(self, t("gui.baslik"), t("gui.tek_soru", kagit=s.kagit)) != QMessageBox.Yes:
+            return False
+        return self._bas(s, "hepsi")
+
+    def _baski_basladi(self, adim):
+        self._baski_suruyor = True
+        self._dur.clear()
+        self._kilitle(True)
+        self.mesgul(True, t({"on": "gui.on_basiliyor", "arka": "gui.arka_basiliyor"}.get(adim, "gui.basiliyor")))
+
+    def _baski_bitti(self):
+        self._baski_suruyor = False
+        self._uyariyi_kapat()
+        self._kilitle(False)
+
+    def _bas(self, is_, adim, sonra=None):
+        """Adımı yazıcıya gönderir ve bitene kadar izler; sonuç _basildi'ye gelir."""
+        return self._baski_islemi(core.bas, is_, adim, sonra)
+
+    def _izle(self, is_, adim, sonra=None):
+        """Önceden gönderilmiş adımı izlemeye devam eder (yarım kalan iş)."""
+        return self._baski_islemi(core.izle, is_, adim, sonra, gonder=False)
+
+    def _baski_islemi(self, fn, is_, adim, sonra, gonder=True):
+        if self.mesgul_mu():
+            QMessageBox.warning(self, t("gui.baslik"), t("gui.mesgul"))
+            return False
+        self._baski_basladi(adim)
+        args = (is_, adim) if gonder else (is_,)
+        self.arkada(fn, *args, bitti=lambda r: self._basildi(is_, adim, r, sonra), bildirimli=True)
         return True
 
-    def _bas(self, adim, sonra=None):
-        self.mesgul(True, t({"on": "gui.on_basiliyor", "arka": "gui.arka_basiliyor"}.get(adim, "gui.basiliyor")))
-        if not self.arkada(core.bas, self.is_, adim, bitti=lambda r: self._basildi(adim, r, sonra)):
-            self.mesgul(False)
-            QMessageBox.warning(self, t("gui.baslik"), t("gui.mesgul"))
+    def _bildirim(self, kod):
+        """Baskı sürerken yazıcı uyarısı: pencereyi kilitlemeden gösterilir, sorun kalkınca kapanır."""
+        if kod is None:
+            self._uyariyi_kapat()
+            if self._baski_suruyor:
+                self.statusBar().showMessage(t("gui.basiliyor"))
+            return
+        metin = t(f"uyari.{kod}")
+        self.statusBar().showMessage(metin.split(".")[0])
+        if self._uyari_kutu is None:
+            self._uyari_kutu = QMessageBox(QMessageBox.Warning, t("gui.uyari_baslik"), metin, QMessageBox.Ok, self)
+            self._uyari_kutu.setWindowModality(Qt.NonModal)
+            self._uyari_kutu.finished.connect(self._uyari_kapandi)
+        else:
+            self._uyari_kutu.setText(metin)
+        self._uyari_kutu.show()
 
-    def _basildi(self, adim, sonuc, sonra):
+    def _uyari_kapandi(self, *_):
+        self._uyari_kutu = None
+
+    def _uyariyi_kapat(self):
+        if self._uyari_kutu is not None:
+            k, self._uyari_kutu = self._uyari_kutu, None
+            k.close()
+
+    def _basildi(self, is_, adim, sonuc, sonra):
+        self._baski_bitti()
         self.mesgul(False)
-        if sonuc == "kagit_yok":
-            QMessageBox.warning(self, t("gui.kagit_yok_baslik"), t("gui.kagit_yok"), QMessageBox.Ok)
+        if sonuc == "durduruldu":       # pencere kapanıyor; iş yazıcıda sürer, yeniden açılınca sorulur
             return
-        if sonuc == "zaman_asimi":
-            QMessageBox.information(self, t("gui.baslik"), t("gui.zaman_asimi"))
+        if sonuc == "iptal":
+            self._denemeden_don()
+            QMessageBox.information(self, t("gui.baslik"), t("gui.iptal_edildi"))
+            self._yarim_bitti()
             return
+        if sonuc == "hata":
+            self._denemeden_don()
+            neden = is_.gecmis[-1].get("neden") or "?"
+            QMessageBox.warning(self, t("gui.baslik"), t("gui.baski_hatasi", neden=neden, gunluk=gunluk_yolu()))
+            self._yarim_bitti()
+            return
+        # bitti
         if sonra:
-            sonra()
-        elif self.is_.deneme:
+            sonra(is_)
+        elif is_.deneme:
             self._deneme_sonucu()
         else:
             self.statusBar().showMessage(t("gui.bitti"), 8000)
             QMessageBox.information(self, t("gui.baslik"), t("gui.bitti") + (
-                t("gui.bitti_kitapcik") if self.is_.duzen == "kitapcik" else ""))
+                t("gui.bitti_kitapcik") if is_.duzen == "kitapcik" else ""))
+            self._yarim_bitti()
 
-    def _arka_sor(self):
-        s = self.is_
-        if not s.arka_sayisi:
+    def _arka_sor(self, is_):
+        if not is_.arka_sayisi:
             QMessageBox.information(self, t("gui.baslik"), t("gui.bitti"))
+            self._yarim_bitti()
             return
         m = QMessageBox(self)
         m.setWindowTitle(t("gui.cevir_baslik"))
         m.setIcon(QMessageBox.Information)
         m.setText(t("gui.on_basildi"))
-        m.setInformativeText(s.kagit_talimati() + t("gui.hazir_olunca"))
+        m.setInformativeText(is_.kagit_talimati() + t("gui.hazir_olunca"))
         devam = m.addButton(t("gui.devam"), QMessageBox.AcceptRole)
         m.addButton(t("gui.vazgec"), QMessageBox.RejectRole)
         m.exec()
         if m.clickedButton() == devam:
-            self._bas("arka")
-        elif s.deneme:
-            self.is_, self._deneme_onceki = self._deneme_onceki, None
-            self.yazdir_btn.setEnabled(self.is_ is not None)
+            self._bas(is_, "arka")
+            return
+        if is_.deneme:
+            self._denemeden_don()
+        else:
+            is_.durum = "vazgecildi"
+            is_.kaydet()
+        self._yarim_bitti()
 
+    # ---------------------------------------------------------- yarım kalan iş
+    def yarim_isi_sor(self):
+        """Son 48 saatte yarım kalan bir baskı varsa devam etmeyi önerir. Devam edildiyse True."""
+        try:
+            is_ = core.yarim_is()
+        except Exception:
+            core.log.exception("yarım iş okunamadı")
+            return False
+        if is_ is None:
+            return False
+        adim = is_.gecmis[-1]["adim"]
+        if is_.durum == "on_basildi":
+            if QMessageBox.question(self, t("gui.yarim_baslik"), t("gui.yarim_arka", dosya=is_.kaynak)) == QMessageBox.Yes:
+                self._arka_sor(is_)
+                return True
+        elif QMessageBox.question(self, t("gui.yarim_baslik"), t("gui.yarim_suruyor", dosya=is_.kaynak)) == QMessageBox.Yes:
+            if self._izle(is_, adim, sonra=self._arka_sor if adim == "on" else None):
+                return True
+        is_.durum = "vazgecildi"
+        is_.kaydet()
+        return False
+
+    def _yarim_bitti(self):
+        """Yarım iş ele alındıktan sonra, başlangıçta verilen dosya varsa onu açar."""
+        if self._sonra_ac and not self._baski_suruyor:
+            yol, self._sonra_ac = self._sonra_ac, None
+            self.dosya_ac(yol)
+
+    # ---------------------------------------------------------- diğer
     def kuyrugu_temizle(self):
         if QMessageBox.question(self, t("gui.kuyruk"), t("gui.kuyruk_soru")) == QMessageBox.Yes:
             core.kuyrugu_temizle(self.yazici.currentText() or None)
             self.durum_guncelle()
 
+    def closeEvent(self, e):
+        if self.mesgul_mu():
+            if self._baski_suruyor and QMessageBox.question(
+                    self, t("gui.baslik"), t("gui.kapat_soru")) != QMessageBox.Yes:
+                e.ignore()
+                return
+            self._dur.set()          # izleme en geç birkaç saniyede durur; iş yazıcıda sürer
+            # quit() burada şart: normalde _isci_bitti çağırır ama o, ana iş parçacığı wait()'te
+            # beklerken hiç çalışamaz; quit'siz wait() sonsuza kadar bekliyordu (pencere donuyordu).
+            self._thread.quit()
+            self._thread.wait()      # çalışan QThread yok edilirse uygulama çöker
+        self._uyariyi_kapat()
+        e.accept()
+
+
+def _beklenmeyen_hata(tip, deger, iz):
+    """Arayüzdeki beklenmeyen hatalar sessizce kaybolmasın: günlüğe yaz, kullanıcıya göster."""
+    core.log.error("beklenmeyen hata", exc_info=(tip, deger, iz))
+    try:
+        QMessageBox.critical(None, t("gui.baslik"),
+                             t("gui.beklenmeyen", hata=f"{tip.__name__}: {deger}", gunluk=gunluk_yolu()))
+    except Exception:
+        sys.__excepthook__(tip, deger, iz)
+
 
 def main():
+    core.gunluk_ac()
+    sys.excepthook = _beklenmeyen_hata
     app = QApplication(sys.argv)
     app.setApplicationName("Yazdır")
     app.setDesktopFileName("yazdir")
     qt_dilini_ayarla()
+    try:
+        core.eski_isleri_temizle()
+    except Exception:
+        core.log.exception("eski işler temizlenemedi")
     p = Pencere(sys.argv[1] if len(sys.argv) > 1 else None)
     p.show()
     sys.exit(app.exec())

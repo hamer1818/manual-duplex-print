@@ -6,6 +6,10 @@ D="$(cd "$(dirname "$0")" && pwd)"
 echo "→ Python ortamı (.venv) hazırlanıyor"
 [ -x "$D/.venv/bin/python" ] || python3 -m venv --system-site-packages "$D/.venv"
 "$D/.venv/bin/pip" install -q --upgrade pypdf
+"$D/.venv/bin/python" -c "import cups" 2>/dev/null || {
+    echo "!! pycups bulunamadı (baskı izleme için gerekli). Kurun: Arch 'python-pycups', Debian/Ubuntu 'python3-cups'"
+    echo "!! pycups is missing (needed to follow print jobs). Install: Arch 'python-pycups', Debian/Ubuntu 'python3-cups'"
+}
 
 echo "→ Komutlar: ~/.local/bin/yazdir, ~/.local/bin/yazdir-gui"
 mkdir -p "$HOME/.local/bin"

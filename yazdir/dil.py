@@ -61,6 +61,10 @@ METINLER = {
     "hata.tek_yuz_is": {"tr": "Bu iş tek yüz; 'hepsi' kullanın.", "en": "This is a one-sided job; use 'hepsi'."},
     "hata.arka_yok": {"tr": "Bu işin arka yüzü yok.", "en": "This job has no back sides."},
     "hata.adim": {"tr": "Bilinmeyen adım: {adim}", "en": "Unknown step: {adim}"},
+    "hata.pycups": {"tr": "pycups bulunamadı. Kurun: Arch 'python-pycups', Debian/Ubuntu 'python3-cups'.",
+                    "en": "pycups is missing. Install it: Arch 'python-pycups', Debian/Ubuntu 'python3-cups'."},
+    "hata.cups_baglanti": {"tr": "CUPS'a bağlanılamadı ({ayrinti}). CUPS çalışıyor mu? (systemctl status cups)",
+                           "en": "Could not connect to CUPS ({ayrinti}). Is CUPS running? (systemctl status cups)"},
     "hata.kuyruk_dolu": {"tr": "Yazıcı kuyruğunda bekleyen iş var. Önce kuyruğu temizleyin ya da bitmesini bekleyin.",
                          "en": "There are jobs waiting in the printer queue. Clear the queue or wait for them to finish."},
 
@@ -85,6 +89,29 @@ METINLER = {
     "durum.hazir": {"tr": "hazır", "en": "ready"},
     "durum.on_basildi": {"tr": "ön yüzler basıldı", "en": "fronts printed"},
     "durum.bitti": {"tr": "bitti", "en": "done"},
+    "durum.hepsi_gonderildi": {"tr": "yazıcıya gönderildi", "en": "sent to the printer"},
+    "durum.on_gonderildi": {"tr": "ön yüzler yazıcıya gönderildi", "en": "fronts sent to the printer"},
+    "durum.arka_gonderildi": {"tr": "arka yüzler yazıcıya gönderildi", "en": "backs sent to the printer"},
+    "durum.vazgecildi": {"tr": "yarıda bırakıldı", "en": "abandoned"},
+
+    # ------------------------------------------------------------ yazıcı uyarıları (baskı sürerken)
+    "uyari.kagit_yok": {"tr": "Yazıcı 'kâğıt yok' diyor. Kâğıdı çıkarıp düzgünce yeniden yerleştirin; olmazsa yazıcıyı "
+                              "kapatıp açın. Baskı bekliyor, kâğıt algılanınca kendiliğinden devam eder.",
+                        "en": "The printer reports 'out of paper'. Take the paper out and load it again neatly; if that does "
+                              "not help, switch the printer off and on. The job is waiting and continues by itself."},
+    "uyari.kagit_sikisti": {"tr": "Kâğıt sıkıştı. Sıkışan kâğıdı dikkatlice çıkarın; baskı sonra devam eder.",
+                            "en": "Paper jam. Carefully remove the jammed paper; printing then continues."},
+    "uyari.kapak_acik": {"tr": "Yazıcının kapağı açık. Kapatınca baskı devam eder.",
+                         "en": "The printer cover is open. Printing continues once it is closed."},
+    "uyari.toner": {"tr": "Toner bitmiş görünüyor.", "en": "The toner seems to be empty."},
+    "uyari.baglanti_yok": {"tr": "Yazıcıya ulaşılamıyor. USB kablosunu ve yazıcının açık olduğunu kontrol edin; "
+                                 "bağlanınca baskı kendiliğinden devam eder.",
+                           "en": "The printer cannot be reached. Check the USB cable and that the printer is on; "
+                                 "printing continues by itself once it is connected."},
+    "uyari.yazici_durdu": {"tr": "Yazıcı CUPS'ta durdurulmuş. Kabloyu ve gücü kontrol edin; uygulama yazıcıyı "
+                                 "yarım dakikada bir yeniden başlatmayı deniyor.",
+                           "en": "The printer is stopped in CUPS. Check the cable and power; the app tries to "
+                                 "restart it every half minute."},
 
     # ------------------------------------------------------------ kâğıdı geri koyma talimatı
     "talimat.nasil": {"tr": "yönünü değiştirmeden (çevirmeden, döndürmeden), basılı yüzü aşağıda tepsiye geri koyun.",
@@ -160,15 +187,6 @@ METINLER = {
     "gui.basiliyor": {"tr": "Basılıyor…", "en": "Printing…"},
     "gui.mesgul": {"tr": "Başka bir işlem sürüyor; birkaç saniye sonra yeniden deneyin.",
                    "en": "Another operation is running; try again in a few seconds."},
-    "gui.kagit_yok_baslik": {"tr": "Kâğıt yok", "en": "Out of paper"},
-    "gui.kagit_yok": {"tr": "Yazıcı 'kâğıt yok' diyor.\n\nKâğıdı çıkarıp düzgünce yeniden yerleştirin. "
-                            "Olmazsa yazıcıyı kapatıp açın.\n\nBaskı kuyrukta bekliyor; kâğıt algılanınca kendiliğinden "
-                            "devam eder.\nİptal etmek isterseniz 'Kuyruğu temizle'ye basın.",
-                      "en": "The printer reports 'out of paper'.\n\nTake the paper out and load it again neatly. "
-                            "If that does not help, switch the printer off and on.\n\nThe job is waiting in the queue and "
-                            "continues by itself once paper is detected.\nTo cancel it, press 'Clear queue'."},
-    "gui.zaman_asimi": {"tr": "Baskı uzun sürüyor; yazıcıyı kontrol edin.",
-                        "en": "Printing is taking a long time; please check the printer."},
     "gui.bitti": {"tr": "Baskı tamamlandı.", "en": "Printing finished."},
     "gui.bitti_kitapcik": {"tr": "\n\nKitapçık: kâğıtları sırayla iç içe koyup ortadan katlayın.",
                            "en": "\n\nBooklet: nest the sheets in order and fold them in the middle."},
@@ -180,6 +198,23 @@ METINLER = {
     "gui.kuyruk": {"tr": "Kuyruk", "en": "Queue"},
     "gui.kuyruk_soru": {"tr": "Yazıcı kuyruğundaki tüm işler iptal edilsin mi?",
                         "en": "Cancel all jobs in the printer queue?"},
+    "gui.uyari_baslik": {"tr": "Yazıcı uyarısı", "en": "Printer warning"},
+    "gui.iptal_edildi": {"tr": "Baskı iptal edildi.", "en": "Printing was cancelled."},
+    "gui.baski_hatasi": {"tr": "Baskı yazıcıda başarısız oldu ({neden}).\n\nYazıcıyı kontrol edip yeniden deneyin. "
+                               "Ayrıntı: {gunluk}",
+                         "en": "Printing failed at the printer ({neden}).\n\nCheck the printer and try again. "
+                               "Details: {gunluk}"},
+    "gui.kapat_soru": {"tr": "Baskı sürüyor. Pencereyi kapatırsanız yazıcı basmaya devam eder; uygulamayı yeniden "
+                             "açtığınızda kaldığı yerden devam edebilirsiniz.\n\nKapatılsın mı?",
+                       "en": "Printing is in progress. If you close the window the printer keeps printing; when you open "
+                             "the app again you can continue where you left off.\n\nClose?"},
+    "gui.yarim_baslik": {"tr": "Yarım kalan baskı", "en": "Unfinished print job"},
+    "gui.yarim_arka": {"tr": "Önceki baskının arka yüzleri basılmadı:\n{dosya}\n\nŞimdi arka yüzlere devam edilsin mi?",
+                       "en": "The back sides of the previous job were not printed:\n{dosya}\n\nContinue with the backs now?"},
+    "gui.yarim_suruyor": {"tr": "Önceki baskı uygulama kapalıyken sürüyordu:\n{dosya}\n\nİzlemeye devam edilsin mi?",
+                          "en": "The previous job was still printing when the app was closed:\n{dosya}\n\nKeep following it?"},
+    "gui.beklenmeyen": {"tr": "Beklenmeyen bir hata oldu:\n{hata}\n\nAyrıntı günlükte: {gunluk}",
+                        "en": "An unexpected error occurred:\n{hata}\n\nDetails are in the log: {gunluk}"},
     "gui.dil_mesgul": {"tr": "Baskı sürerken dil değiştirilemez.", "en": "The language cannot be changed while printing."},
 
     # ------------------------------------------------------------ komut satırı
@@ -224,10 +259,6 @@ Without JOB the most recently prepared job is used. --json gives machine-readabl
     "cli.h.dil": {"tr": "arayüz dilini seç", "en": "select the interface language"},
     "cli.bitti": {"tr": "Baskı tamamlandı.", "en": "Printing finished."},
     "cli.gonderildi": {"tr": "Yazıcıya gönderildi.", "en": "Sent to the printer."},
-    "cli.kagit_yok": {"tr": "Yazıcı 'kağıt yok' diyor. İş kuyrukta bekliyor; kağıdı düzeltin ya da 'yazdir temizle' ile iptal edin.",
-                      "en": "The printer reports 'out of paper'. The job is waiting in the queue; fix the paper or cancel with 'yazdir temizle'."},
-    "cli.zaman_asimi": {"tr": "Baskı uzun sürdü; 'yazdir durum' ile kontrol edin.",
-                        "en": "Printing took too long; check with 'yazdir durum'."},
     "cli.sonra_arka": {"tr": "Sonra (yeni onayla): yazdir bas {id} arka --onayli",
                        "en": "Then (with a new confirmation): yazdir bas {id} arka --onayli"},
     "cli.onay_yok": {"tr": "Yazdırılmadı: 'bas' için --onayli gerekir (kullanıcı onayı). İş {id}, adım '{adim}'.",
@@ -240,6 +271,10 @@ Without JOB the most recently prepared job is used. --json gives machine-readabl
                            "en": "Saved: back sides will be printed rotated 180°."},
     "cli.kaydedildi_duz": {"tr": "Kaydedildi: arka yüzler çevrilmeden basılacak.",
                            "en": "Saved: back sides will be printed without rotation."},
+    "cli.iptal": {"tr": "Baskı iptal edildi.", "en": "Printing was cancelled."},
+    "cli.hata_sonuc": {"tr": "Baskı yazıcıda başarısız oldu ({neden}).", "en": "Printing failed at the printer ({neden})."},
+    "cli.uyari": {"tr": "UYARI: {m}", "en": "WARNING: {m}"},
+    "cli.uyari_kalkti": {"tr": "Sorun giderildi, baskı sürüyor.", "en": "Problem cleared, printing continues."},
     "cli.uyarilar": {"tr": "Uyarılar: {x}", "en": "Alerts: {x}"},
     "cli.kuyruk": {"tr": "Kuyruk: {x}", "en": "Queue: {x}"},
     "cli.bos": {"tr": "boş", "en": "empty"},

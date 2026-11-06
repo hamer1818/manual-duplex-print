@@ -19,12 +19,16 @@ Arka yüzlerin yönü:
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
+import logging.handlers
 import os
 import re
 import shutil
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -51,6 +55,21 @@ def duzen_adi(duzen: str) -> str:
 
 class YazdirHata(Exception):
     pass
+
+
+log = logging.getLogger("yazdir")
+
+
+def gunluk_ac() -> Path:
+    """Günlüğü ~/.cache/yazdir/yazdir.log dosyasına yazar (en çok 3 × 1 MB). Sorun olunca buraya bakılır."""
+    yol = CACHE / "yazdir.log"
+    if not any(isinstance(h, logging.handlers.RotatingFileHandler) for h in log.handlers):
+        yol.parent.mkdir(parents=True, exist_ok=True)
+        h = logging.handlers.RotatingFileHandler(yol, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(h)
+        log.setLevel(logging.INFO)
+    return yol
 
 
 # ---------------------------------------------------------------- ayarlar
@@ -96,6 +115,8 @@ def varsayilan_yazici() -> str | None:
 
 # ---------------------------------------------------------------- dönüştürme
 def pdfe_cevir(kaynak: Path, hedef_klasor: Path) -> Path:
+    """Kaynağı hedef_klasor/kaynak.pdf yapar. Word/resim dönüşümleri önbelleğe alınır: ayar değiştikçe
+    LibreOffice'in yeniden çalışmaması için (dosya değişirse önbellek anahtarı da değişir)."""
     kaynak = Path(kaynak).expanduser().resolve()
     if not kaynak.exists():
         raise YazdirHata(t("hata.dosya_yok", yol=kaynak))
@@ -103,7 +124,23 @@ def pdfe_cevir(kaynak: Path, hedef_klasor: Path) -> Path:
     hedef = hedef_klasor / "kaynak.pdf"
     if ext == ".pdf":
         shutil.copyfile(kaynak, hedef)
-    elif ext in OFFICE_EXT:
+        return hedef
+    if ext not in OFFICE_EXT | IMAGE_EXT:
+        raise YazdirHata(t("hata.tur", ext=ext))
+    st = kaynak.stat()
+    anahtar = hashlib.sha1(f"{kaynak}|{st.st_mtime_ns}|{st.st_size}".encode()).hexdigest()
+    onbellek = CACHE / "donusum" / f"{anahtar}.pdf"
+    if onbellek.exists():
+        shutil.copyfile(onbellek, hedef)
+        return hedef
+    _donustur(kaynak, ext, hedef_klasor, hedef)
+    onbellek.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(hedef, onbellek)
+    return hedef
+
+
+def _donustur(kaynak: Path, ext: str, hedef_klasor: Path, hedef: Path) -> None:
+    if ext in OFFICE_EXT:
         profil = CACHE / "lo-profil"
         r = subprocess.run(
             ["soffice", f"-env:UserInstallation=file://{profil}", "--headless",
@@ -117,9 +154,6 @@ def pdfe_cevir(kaynak: Path, hedef_klasor: Path) -> Path:
         r = subprocess.run(["magick", str(kaynak), "-auto-orient", str(hedef)], capture_output=True, text=True)
         if r.returncode != 0:
             raise YazdirHata(t("hata.resim", ayrinti=r.stderr.strip()))
-    else:
-        raise YazdirHata(t("hata.tur", ext=ext))
-    return hedef
 
 
 def sayfa_secimi(metin: str | None, toplam: int) -> list[int]:
@@ -145,9 +179,12 @@ def sayfa_secimi(metin: str | None, toplam: int) -> list[int]:
 
 
 # ---------------------------------------------------------------- yerleştirme
-def _yerlestir(hedef: PageObject, kaynak: PageObject, x: float, y: float, w: float, h: float) -> None:
-    """Kaynak sayfayı (x, y, w, h) kutusuna oranını koruyarak ortalar; gerekirse 90° döndürür."""
-    kaynak.transfer_rotation_to_content()
+def _yerlestir(hedef: PageObject, kaynak: PageObject, x: float, y: float, w: float, h: float,
+               dondur_180: bool = False) -> None:
+    """Kaynak sayfayı (x, y, w, h) kutusuna oranını koruyarak ortalar; gerekirse 90° döndürür.
+    dondur_180: sonuç kutunun ortası etrafında ayrıca 180° çevrilir (arka yüzler için)."""
+    if kaynak.rotation % 360:   # /Rotate içeriğe aktarılır (yalnız gerekiyorsa: boş/deneme sayfalarında gerekmez)
+        kaynak.transfer_rotation_to_content()
     kutu = kaynak.cropbox
     x0, y0 = float(kutu.left), float(kutu.bottom)
     sw, sh = float(kutu.width), float(kutu.height)
@@ -161,19 +198,27 @@ def _yerlestir(hedef: PageObject, kaynak: PageObject, x: float, y: float, w: flo
     else:
         k = duz
     donusum = donusum.scale(k).translate(x + (w - sw * k) / 2, y + (h - sh * k) / 2)
+    if dondur_180:
+        donusum = donusum.rotate(180).translate(2 * x + w, 2 * y + h)
     hedef.merge_transformed_page(kaynak, donusum)
+
+
+def _yeni_sayfa(w: float, h: float) -> PageObject:
+    """Bir PdfWriter'a bağlı boş sayfa. pypdf, writer'a bağlı olmayan sayfaya içerik eklemeyi
+    güvenilmez sayıp 7.0'da kaldırıyor; bütün sayfalar bu yüzden buradan üretilir."""
+    return PdfWriter().add_blank_page(width=w, height=h)
 
 
 def _yuz(slotlar, sayfalar, yatay: bool) -> PageObject:
     W, H = (A4_H, A4_W) if yatay else (A4_W, A4_H)
-    p = PageObject.create_blank_page(width=W, height=H)
+    p = _yeni_sayfa(W, H)
     for (x, y, w, h), s in zip(slotlar, sayfalar):
         if s is not None:
             _yerlestir(p, s, x, y, w, h)
     return p
 
 
-def yuzleri_olustur(reader: PdfReader, secim: list[int], duzen: str) -> list[PageObject]:
+def yuzleri_olustur(reader, secim: list[int], duzen: str) -> list[PageObject]:
     """Seçilen kaynak sayfalarını A4 yüzlere yerleştirir. Sıra = baskı yüzü sırası."""
     kaynak = lambda n: reader.pages[n - 1]
     if duzen == "1":
@@ -206,17 +251,15 @@ def _yatay_duzen(duzen: str) -> bool:
 
 def _a4_dikey(yuz: PageObject, dondur_180: bool) -> PageObject:
     """Yüzü A4 dikey sayfaya yerleştirir (yataysa hep aynı yöne 90° döner); istenirse 180° çevirir."""
-    p = PageObject.create_blank_page(width=A4_W, height=A4_H)
-    _yerlestir(p, yuz, 0, 0, A4_W, A4_H)
-    if dondur_180:
-        p.add_transformation(Transformation().rotate(180).translate(A4_W, A4_H))
+    p = _yeni_sayfa(A4_W, A4_H)
+    _yerlestir(p, yuz, 0, 0, A4_W, A4_H, dondur_180)
     return p
 
 
 def _bos_yuz() -> PageObject:
     """Boş arka yüz. Sürücü tümüyle boş sayfayı atlarsa sıra kayar; bu yüzden gözle
     görülmeyecek kadar küçük, açık gri bir nokta konur."""
-    p = PageObject.create_blank_page(width=A4_W, height=A4_H)
+    p = _yeni_sayfa(A4_W, A4_H)
     icerik = DecodedStreamObject()
     icerik.set_data(b"0.9 g 297 30 0.5 0.5 re f")
     p[NameObject("/Contents")] = icerik
@@ -251,7 +294,8 @@ class Is:
     arka_bos_sayfa: bool = False    # son kâğıdın arkası boş geçer, kâğıt ayırmak gerekmez
     arka_180: bool = False          # yazıcı ayarı: arka yüzler ek olarak 180° döndürüldü mü
     deneme: bool = False            # yön deneme sayfası
-    durum: str = "hazir"          # hazir -> on_basildi -> bitti
+    # hazir -> (hepsi|on|arka)_gonderildi -> on_basildi / bitti ; vazgecildi: kullanıcı yarım işi bıraktı
+    durum: str = "hazir"
     gecmis: list = field(default_factory=list)
 
     @property
@@ -301,6 +345,51 @@ class Is:
         return m
 
 
+def isi_sil(is_: Is) -> None:
+    """Hiç basılmamış, artık gösterilmeyen işin klasörünü siler (her ayar değişikliği yeni iş açar)."""
+    if not is_.gecmis and Path(is_.klasor).parent == CACHE / "isler":
+        shutil.rmtree(is_.klasor, ignore_errors=True)
+
+
+def eski_isleri_temizle(gun: int = 14) -> int:
+    """`gun` günden eski iş klasörlerini ve dönüşüm önbelleğini siler. Silinen klasör sayısını döndürür."""
+    sinir = time.time() - gun * 86400
+    n = 0
+    for klasor in list((CACHE / "isler").glob("*")) + list((CACHE / "donusum").glob("*.pdf")):
+        try:
+            if klasor.stat().st_mtime < sinir:
+                shutil.rmtree(klasor) if klasor.is_dir() else klasor.unlink()
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
+YARIM_DURUMLAR = ("hepsi_gonderildi", "on_gonderildi", "on_basildi", "arka_gonderildi")
+
+
+def yarim_is(saat: int = 48) -> Is | None:
+    """Son `saat` içinde başlayıp bitmemiş (ör. arka yüzleri basılmamış) en son işi döndürür."""
+    sinir = time.time() - saat * 3600
+    adaylar = []
+    for yol in (CACHE / "isler").glob("*/is.json"):
+        try:
+            adaylar.append((yol.stat().st_mtime, yol))
+        except OSError:
+            pass
+    for zaman, yol in sorted(adaylar, reverse=True):   # en son dokunulan iş önce
+        if zaman < sinir:
+            break
+        try:
+            is_ = Is(**json.loads(yol.read_text()))
+        except (OSError, ValueError, TypeError):
+            continue
+        if is_.gecmis and not is_.deneme:
+            # "cups_no" yoksa eski sürümle basılmış iştir; durumu güvenilir değil, sorulmaz
+            return is_ if is_.durum in YARIM_DURUMLAR and "cups_no" in is_.gecmis[-1] else None
+    return None
+
+
 def hazirla(dosya: str, duzen: str = "1", arkali_onlu: bool = False, sayfalar: str | None = None,
             kopya: int = 1, yazici: str | None = None) -> Is:
     if duzen not in DUZENLER:
@@ -312,11 +401,11 @@ def hazirla(dosya: str, duzen: str = "1", arkali_onlu: bool = False, sayfalar: s
     n = 1
     while klasor.exists():
         n += 1
-        klasor = CACHE / "isler" / f"{is_id}-{n}"
+        klasor = CACHE / "isler" / f"{is_id}-{n:03d}"   # sıfır dolgulu: ad sırası = oluşturma sırası
     klasor.mkdir(parents=True)
     try:
         pdf = pdfe_cevir(Path(dosya), klasor)
-        reader = PdfReader(str(pdf))
+        reader = PdfWriter(clone_from=str(pdf))   # sayfalar writer'a bağlı olsun (bkz. _yeni_sayfa)
         secim = sayfa_secimi(sayfalar, len(reader.pages))
         yuzler = yuzleri_olustur(reader, secim, duzen)
     except Exception:
@@ -344,12 +433,14 @@ def hazirla(dosya: str, duzen: str = "1", arkali_onlu: bool = False, sayfalar: s
                 is_.arka_bos_sayfa = True
             _yaz(list(reversed(arkalar)), klasor / "arka.pdf")
     is_.kaydet()
+    log.info("hazırlandı %s: %s düzen=%s arkalı=%s yüz=%d kâğıt=%d", is_.id, is_.kaynak, duzen, arkali_onlu,
+             is_.yuz_sayisi, is_.kagit)
     return is_
 
 
 def _deneme_yuzu(yazi: str) -> PageObject:
     """Üstte büyük ok ve 'ÜST', ortada yüzün adı olan A4 sayfa (Helvetica, WinAnsi)."""
-    p = PageObject.create_blank_page(width=A4_W, height=A4_H)
+    p = _yeni_sayfa(A4_W, A4_H)
     p[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({
         NameObject("/F1"): DictionaryObject({
             NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
@@ -387,18 +478,72 @@ def deneme_sonucu(arka_dogru: bool) -> bool:
 
 
 def onizleme(is_: Is, cozunurluk: int = 40, en_fazla: int | None = None) -> list[Path]:
+    """Yüzlerin PNG önizlemeleri. Sayfalar parçalara bölünüp aynı anda birkaç pdftoppm ile çizilir."""
     hedef = is_.yol / "onizleme"
     hedef.mkdir(exist_ok=True)
     for eski in hedef.glob("*.png"):
         eski.unlink()
-    arg = ["pdftoppm", "-r", str(cozunurluk), "-png"]
-    if en_fazla:
-        arg += ["-l", str(en_fazla)]
-    subprocess.run(arg + [str(is_.dosya("yuzler.pdf")), str(hedef / "yuz")], check=True)
-    return sorted(hedef.glob("yuz-*.png"))
+    toplam = min(is_.yuz_sayisi, en_fazla or is_.yuz_sayisi)
+    parca = max(4, -(-toplam // min(8, os.cpu_count() or 2)))
+    kaynak = str(is_.dosya("yuzler.pdf"))
+
+    def ciz(bas: int) -> None:
+        son = min(toplam, bas + parca - 1)
+        subprocess.run(["pdftoppm", "-r", str(cozunurluk), "-png", "-f", str(bas), "-l", str(son),
+                        kaynak, str(hedef / "yuz")], check=True, capture_output=True)
+
+    with ThreadPoolExecutor() as havuz:
+        list(havuz.map(ciz, range(1, toplam + 1, parca)))
+    return sorted(hedef.glob("yuz-*.png"), key=lambda y: int(y.stem.rsplit("-", 1)[1]))
 
 
 # ---------------------------------------------------------------- yazıcı
+# İş ve yazıcı durumu CUPS'a doğrudan sorulur (pycups). Kayıt dosyası taramak ve "kuyrukta yok = bitti"
+# varsaymak, iptal edilen ya da hata veren işi "basıldı" sanmaya yol açıyordu.
+IS_BEKLIYOR, IS_TUTULUYOR, IS_ISLENIYOR, IS_DURDU, IS_IPTAL, IS_HATA, IS_BITTI = 3, 4, 5, 6, 7, 8, 9
+YAZICI_BOSTA, YAZICI_BASIYOR, YAZICI_DURDU = 3, 4, 5
+
+# printer-state-reasons (sonundaki -error/-warning/-report atılır) -> uyarı kodu (dil.py: uyari.*)
+UYARI_NEDENLERI = {
+    "media-empty": "kagit_yok", "media-needed": "kagit_yok", "input-tray-missing": "kagit_yok",
+    "media-jam": "kagit_sikisti", "door-open": "kapak_acik", "cover-open": "kapak_acik",
+    "toner-empty": "toner", "marker-supply-empty": "toner",
+    "offline": "baglanti_yok", "connecting-to-device": "baglanti_yok", "timed-out": "baglanti_yok",
+}
+
+
+def _cups():
+    try:
+        import cups
+    except ImportError:
+        raise YazdirHata(t("hata.pycups")) from None
+    try:
+        return cups.Connection()
+    except RuntimeError as e:
+        raise YazdirHata(t("hata.cups_baglanti", ayrinti=e)) from None
+
+
+def is_durumu(cups_no: int) -> tuple[int, str]:
+    a = _cups().getJobAttributes(cups_no, requested_attributes=["job-state", "job-state-reasons"])
+    neden = a.get("job-state-reasons", "")
+    return int(a["job-state"]), ",".join(neden) if isinstance(neden, list) else str(neden)
+
+
+def yazici_bilgisi(yazici: str) -> dict:
+    """{'durum': 3/4/5, 'uyarilar': [kod…], 'nedenler': [ham…], 'kuyruk': n} — hızlı (tek IPP isteği)."""
+    c = _cups()
+    a = c.getPrinterAttributes(yazici, requested_attributes=[
+        "printer-state", "printer-state-reasons", "queued-job-count"])
+    nedenler = [n for n in a.get("printer-state-reasons", []) if n != "none"]
+    uyarilar = []
+    for n in nedenler:
+        kod = UYARI_NEDENLERI.get(re.sub(r"-(error|warning|report)$", "", n))
+        if kod and kod not in uyarilar:
+            uyarilar.append(kod)
+    return {"durum": int(a.get("printer-state", 0)), "uyarilar": uyarilar, "nedenler": nedenler,
+            "kuyruk": int(a.get("queued-job-count", 0))}
+
+
 def yazici_durumu(yazici: str | None = None) -> dict:
     yazici = yazici or varsayilan_yazici()
     p = subprocess.run(["lpstat", "-l", "-p", yazici or ""], capture_output=True, text=True).stdout
@@ -421,38 +566,87 @@ def son_hatalar(dakika: int = 5, since: str | None = None) -> list[str]:
 
 def kuyrugu_temizle(yazici: str | None = None) -> None:
     yazici = yazici or varsayilan_yazici()
+    log.info("kuyruk temizlendi: %s", yazici)
     subprocess.run(["cancel", "-a", yazici], capture_output=True)
     subprocess.run(["cupsenable", yazici], capture_output=True)
 
 
-def _lp(yol: Path, yazici: str) -> str:
+def _lp(yol: Path, yazici: str) -> tuple[str, int]:
     r = subprocess.run(["lp", "-d", yazici, "-o", "media=A4", "-o", "fit-to-page", str(yol)],
                        capture_output=True, text=True)
-    m = re.search(r"request id is (\S+)", r.stdout)
+    m = re.search(r"request id is (\S+-(\d+))", r.stdout)
     if r.returncode != 0 or not m:
         raise YazdirHata(t("hata.gonderilemedi", ayrinti=r.stderr.strip() or r.stdout.strip()))
-    return m.group(1)
+    return m.group(1), int(m.group(2))
 
 
-def bekle(cups_is: str, baslangic: str, zaman_asimi: int = 900, ilerleme=None) -> str:
-    """'bitti' | 'kagit_yok' | 'zaman_asimi'. kagit_yok durumunda iş kuyrukta bekler."""
-    son = time.time() + zaman_asimi
-    while time.time() < son:
-        o = subprocess.run(["lpstat", "-o"], capture_output=True, text=True).stdout
-        if cups_is not in o.split():
-            return "bitti"
-        j = subprocess.run(["journalctl", "-u", "cups", "--since", baslangic, "--no-pager", "-q"],
-                           capture_output=True, text=True).stdout
-        if "media-empty" in j:
-            return "kagit_yok"
-        if ilerleme:
-            ilerleme()
-        time.sleep(2)
-    return "zaman_asimi"
+def izle(is_: Is, bildir=None, dur=None, aralik: float = 1.5) -> str:
+    """İşin son gönderilen adımını CUPS'ta biter ya da durdurulana kadar izler.
+
+    Döner: 'bitti' | 'iptal' | 'hata' | 'durduruldu' (dur olayı geldi; iş yazıcıda sürer, sonra devam edilir).
+    Süre sınırı yoktur: kâğıt bitse, kapak açılsa, kablo çıksa da iş bekler. bildir(kod) her uyarı
+    değişiminde çağrılır (kod: 'kagit_yok', 'baglanti_yok', … ya da None = sorun kalktı).
+    Yazıcı CUPS'ta durdurulmuşsa (bağlantı koptuğunda hp arka ucu böyle yapar) 30 sn'de bir yeniden
+    etkinleştirilir; iş kaldığı yerden sürer.
+    """
+    k = is_.gecmis[-1]
+    adim, no = k["adim"], k["cups_no"]
+    son_uyari, son_etkinlestirme = None, 0.0
+    while True:
+        if dur is not None and dur.is_set():
+            sonuc = "durduruldu"
+            break
+        durum, neden = is_durumu(no)
+        if durum == IS_BITTI:
+            _yazicinin_bitmesini_bekle(is_.yazici, dur)
+            sonuc = "bitti"
+            break
+        if durum in (IS_IPTAL, IS_HATA):
+            sonuc = "iptal" if durum == IS_IPTAL else "hata"
+            k["neden"] = neden
+            break
+        y = yazici_bilgisi(is_.yazici)
+        uyari = y["uyarilar"][0] if y["uyarilar"] else None
+        if y["durum"] == YAZICI_DURDU:
+            uyari = uyari or "yazici_durdu"
+            if time.time() - son_etkinlestirme > 30:
+                subprocess.run(["cupsenable", is_.yazici], capture_output=True)
+                son_etkinlestirme = time.time()
+        if uyari != son_uyari:
+            (log.warning if uyari else log.info)("iş %s (%s): uyarı %s, nedenler %s", is_.id, adim, uyari,
+                                                 y["nedenler"])
+            if bildir:
+                bildir(uyari)
+            son_uyari = uyari
+        time.sleep(aralik)
+    if son_uyari and bildir:
+        bildir(None)
+    onceki = {"hepsi": "hazir", "on": "hazir", "arka": "on_basildi"}[adim]
+    if sonuc == "bitti":
+        is_.durum = {"hepsi": "bitti", "on": "on_basildi" if is_.arka_sayisi else "bitti", "arka": "bitti"}[adim]
+    elif sonuc in ("iptal", "hata"):
+        is_.durum = onceki   # aynı adım yeniden denenebilir
+    k["sonuc"] = sonuc
+    is_.kaydet()
+    log.info("iş %s adım %s: %s %s", is_.id, adim, sonuc, k.get("neden", ""))
+    return sonuc
 
 
-def bas(is_: Is, adim: str, bekleyerek: bool = True, ilerleme=None) -> str:
-    """adim: 'hepsi' (tek yüz), 'on' veya 'arka' (arkalı önlü)."""
+def _yazicinin_bitmesini_bekle(yazici: str, dur=None, en_cok: float = 90) -> None:
+    """CUPS işi bitti dese de son sayfa yazıcıda basılıyor olabilir; kâğıtlar alınmadan önce yazıcının
+    boşa çıkmasını bekler (en çok `en_cok` sn)."""
+    son = time.time() + en_cok
+    while time.time() < son and not (dur is not None and dur.is_set()):
+        try:
+            if yazici_bilgisi(yazici)["durum"] != YAZICI_BASIYOR:
+                return
+        except YazdirHata:
+            return
+        time.sleep(1)
+
+
+def bas(is_: Is, adim: str, bekleyerek: bool = True, bildir=None, dur=None) -> str:
+    """adim: 'hepsi' (tek yüz), 'on' veya 'arka' (arkalı önlü). Sonuç için bkz. izle()."""
     if not is_.yazici:
         raise YazdirHata(t("hata.yazici_yok"))
     if adim == "hepsi":
@@ -469,15 +663,14 @@ def bas(is_: Is, adim: str, bekleyerek: bool = True, ilerleme=None) -> str:
         dosya = is_.dosya("arka.pdf")
     else:
         raise YazdirHata(t("hata.adim", adim=adim))
-    if subprocess.run(["lpstat", "-o", is_.yazici], capture_output=True, text=True).stdout.strip():
+    if not dosya.exists():
+        raise YazdirHata(t("hata.dosya_yok", yol=dosya))
+    if yazici_bilgisi(is_.yazici)["kuyruk"]:
         raise YazdirHata(t("hata.kuyruk_dolu"))
 
-    baslangic = time.strftime("%Y-%m-%d %H:%M:%S")
-    cups_is = _lp(dosya, is_.yazici)
-    is_.gecmis.append({"adim": adim, "cups": cups_is, "zaman": baslangic})
-    sonuc = bekle(cups_is, baslangic, ilerleme=ilerleme) if bekleyerek else "gonderildi"
-    if sonuc in ("bitti", "gonderildi"):
-        is_.durum = {"hepsi": "bitti", "on": "on_basildi" if is_.arka_sayisi else "bitti", "arka": "bitti"}[adim]
-    is_.gecmis[-1]["sonuc"] = sonuc
+    ad, no = _lp(dosya, is_.yazici)
+    is_.gecmis.append({"adim": adim, "cups": ad, "cups_no": no, "zaman": time.strftime("%Y-%m-%d %H:%M:%S")})
+    is_.durum = f"{adim}_gonderildi"
     is_.kaydet()
-    return sonuc
+    log.info("iş %s adım %s yazıcıya gönderildi: %s", is_.id, adim, ad)
+    return izle(is_, bildir, dur) if bekleyerek else "gonderildi"

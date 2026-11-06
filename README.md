@@ -14,6 +14,9 @@ or run `yazdir dil en`. The commands are `yazdir` / `yazdir-gui` (*yazdır* is T
 - **Layouts:** 1, 2 (side by side) or 4 pages per side; **A5 booklet** (fold in the middle,
   pages are imposed automatically). Page ranges and copies.
 - Input: PDF, Word/LibreOffice documents, images.
+- **Robust printing:** job state is read from CUPS. Out of paper, a jam or an unplugged cable shows a
+  warning and the job simply waits; a cancelled job is never treated as printed. If the window is
+  closed (or the computer restarts) between the fronts and the backs, the app offers to continue.
 
 ```bash
 git clone https://github.com/hamer1818/manual-duplex-print.git
@@ -39,13 +42,24 @@ Otomatik arkalı önlü baskı yapamayan yazıcılar (ör. HP LaserJet 1018) iç
 Linux, yazıcısı CUPS'ta tanımlı olmalı. Paketler (Arch adlarıyla; başka dağıtımlarda benzerleri):
 
 - `cups` — `lp`, `lpstat`, `cancel`
+- `python-pycups` (Debian/Ubuntu: `python3-cups`) — baskı işini CUPS'tan izlemek için
 - `python` 3.10+ ve `pyside6` (pencereli uygulama için, sistemden)
 - `poppler` — önizleme için `pdftoppm`
 - `libreoffice` — Word/ODT/PowerPoint/Excel dosyaları için (yalnız PDF basacaksanız gerekmez)
 - `imagemagick` — resim dosyaları için
 - `pypdf` — `install.sh` sanal ortama kurar
 
-Kağıt hatası algılama `journalctl -u cups` kayıtlarını okur (systemd).
+## Kararlılık
+- İş durumu doğrudan CUPS'tan okunur. Kâğıt biterse, sıkışırsa, kablo çıkarsa uyarı gösterilir ve
+  baskı bekler; sorun kalkınca kendiliğinden sürer. İptal edilen iş "basıldı" sayılmaz.
+- Ön ve arka yüz arasında pencere kapanırsa (ya da bilgisayar yeniden başlarsa) uygulama açılınca
+  kaldığı yerden devam etmeyi önerir.
+- Günlük: `~/.cache/yazdir/yazdir.log`. 14 günden eski işler kendiliğinden silinir.
+
+## Testler
+```bash
+./test.sh        # yazıcıya, ayarlara ve önbelleğe dokunmaz; ~2 sn
+```
 
 ## Kurulum
 ```bash

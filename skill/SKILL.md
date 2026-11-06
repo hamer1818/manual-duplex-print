@@ -26,7 +26,7 @@ Test ederken bile `bas` çalıştırma (bir kez yanlışlıkla kâğıt basıld�
 4. Tek yüz: `yazdir bas hepsi --onayli` · Arkalı önlü: `yazdir bas on --onayli` → çıktıdaki talimatı kullanıcıya ilet
    (tomarın HEPSİNİ yönünü değiştirmeden, basılı yüzü aşağıda geri koyacak; kâğıt ayırmayacak — yüz sayısı
    tekse son kâğıt arkası boş geçer) →
-   yeni "bas" onayı → `yazdir bas arka --onayli`. `bas` bitene kadar bekler; çıkış kodu 2 = kağıt yok/zaman aşımı.
+   yeni "bas" onayı → `yazdir bas arka --onayli`. `bas` iş CUPS'ta bitene kadar bekler (kâğıt biterse `UYARI:` yazar ve beklemeyi sürdürür); çıkış kodu 2 = iş iptal edildi ya da yazıcıda başarısız oldu.
 5. Kitapçık: kâğıtlar sırayla iç içe konup ortadan katlanır.
 
 ## Dil
@@ -39,7 +39,7 @@ Kullanıcı "arka sayfalar ters/baş aşağı çıkıyor" derse: `yazdir deneme`
 kullanıcıya oku sor → `yazdir deneme-sonucu evet|hayir` (ayar `~/.config/yazdir/config.json` → `arka_180`).
 
 ## Sorun giderme
-- `yazdir durum` → yazıcı, kuyruk, son CUPS hataları.
+- `yazdir durum` → yazıcı, kuyruk, son CUPS hataları. Uygulama günlüğü: `~/.cache/yazdir/yazdir.log`.
 - `media-empty-error` (kırmızı ışık, kağıt varken bile): kullanıcı kağıdı çıkarıp düzgünce yeniden koysun, gerekirse
   yazıcıyı kapatıp açsın. İş kuyrukta bekler. Takılırsa `yazdir temizle` (tüm işleri iptal eder) — bunu da kullanıcıya söyleyerek yap.
 - `bas`, kuyrukta başka iş varsa çalışmaz; önce durumu kontrol et.

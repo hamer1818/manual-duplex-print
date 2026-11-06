@@ -50,6 +50,7 @@ def main(argv=None):
     dl.add_argument("kod", choices=list(core.dil.DILLER))
 
     a = ap.parse_args(argv)
+    core.gunluk_ac()
     js = a.json
     try:
         if a.komut == "hazirla":
@@ -73,8 +74,14 @@ def main(argv=None):
             is_ = core.Is.yukle(is_id)
             if not a.onayli:
                 raise core.YazdirHata(t("cli.onay_yok", id=is_.id, adim=adim))
-            sonuc = core.bas(is_, adim, bekleyerek=not a.beklemeden)
-            mesaj = t(f"cli.{sonuc}")
+            def bildir(kod):
+                print(t("cli.uyari", m=t(f"uyari.{kod}")) if kod else t("cli.uyari_kalkti"), file=sys.stderr, flush=True)
+
+            sonuc = core.bas(is_, adim, bekleyerek=not a.beklemeden, bildir=bildir)
+            if sonuc == "hata":
+                mesaj = t("cli.hata_sonuc", neden=is_.gecmis[-1].get("neden") or "?")
+            else:
+                mesaj = t({"bitti": "cli.bitti", "gonderildi": "cli.gonderildi", "iptal": "cli.iptal"}[sonuc])
             if sonuc in ("bitti", "gonderildi") and adim == "on" and is_.arka_sayisi:
                 mesaj += "\n" + is_.kagit_talimati() + "\n" + t("cli.sonra_arka", id=is_.id)
             _cikti({"sonuc": sonuc, "is": is_.id, "durum": is_.durum, "mesaj": mesaj}, mesaj, js)
