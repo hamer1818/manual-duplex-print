@@ -1,0 +1,4 @@
+#!/bin/sh
+# Pencereli uygulama: yazdir-gui [DOSYA]
+D="$(dirname "$(readlink -f "$0")")/.."
+PYTHONPATH="$D${PYTHONPATH:+:$PYTHONPATH}" exec "$D/.venv/bin/python" -c "from yazdir.gui import main; main()" "$@"

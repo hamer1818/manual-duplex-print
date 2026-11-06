@@ -1,0 +1,4 @@
+#!/bin/sh
+# Komut satırı: yazdir --help
+D="$(dirname "$(readlink -f "$0")")/.."
+PYTHONPATH="$D${PYTHONPATH:+:$PYTHONPATH}" exec "$D/.venv/bin/python" -m yazdir "$@"
